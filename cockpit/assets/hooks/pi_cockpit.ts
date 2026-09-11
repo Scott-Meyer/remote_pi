@@ -23,6 +23,7 @@ export default function cockpitTurnStatus(pi: ExtensionAPI) {
   let lastSentToCockpit: string | null = null;
   let subClient: net.Socket | null = null;
   let namePollTimer: NodeJS.Timeout | null = null;
+  let reconnectTimer: NodeJS.Timeout | null = null;
 
   function getWorkspaceName(): string {
     return (
@@ -69,7 +70,7 @@ export default function cockpitTurnStatus(pi: ExtensionAPI) {
     });
   }
 
-  function syncName(rawName: string | undefined | null) {
+  function syncName(rawName: string | undefined | null, forceSend = false) {
     const raw = rawName?.trim();
     if (!raw) return;
 
@@ -80,8 +81,8 @@ export default function cockpitTurnStatus(pi: ExtensionAPI) {
       pi.setSessionName(canonical);
     }
 
-    // 2. If not yet sent to Cockpit, notify Cockpit over IPC
-    if (canonical !== lastSentToCockpit) {
+    // 2. If not yet sent to Cockpit, or if forced (Cockpit sent non-canonical name), notify Cockpit over IPC
+    if (forceSend || canonical !== lastSentToCockpit) {
       lastSentToCockpit = canonical;
       sendOneShot({
         type: "cmd",
@@ -102,6 +103,10 @@ export default function cockpitTurnStatus(pi: ExtensionAPI) {
   }
 
   function connectSubscriber() {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     if (subClient) {
       try {
         subClient.destroy();
@@ -135,13 +140,19 @@ export default function cockpitTurnStatus(pi: ExtensionAPI) {
           if (!line) continue;
           try {
             const parsed = JSON.parse(line);
-            // Cockpit tab renamed -> route through syncName to ensure canonical convergence
+            // Cockpit tab renamed -> route through syncName to ensure canonical convergence.
+            // If Cockpit passed an un-prefixed name, force-send the canonical correction back!
             if (
               parsed &&
               parsed.event === "tab_renamed" &&
               typeof parsed.name === "string"
             ) {
-              syncName(parsed.name);
+              const incoming = parsed.name.trim();
+              if (incoming) {
+                const canonical = toCanonical(incoming);
+                const needsCorrection = incoming !== canonical;
+                syncName(incoming, needsCorrection);
+              }
             }
           } catch (_) {}
         }
@@ -151,7 +162,8 @@ export default function cockpitTurnStatus(pi: ExtensionAPI) {
       client.on("close", () => {
         if (subClient === client) {
           subClient = null;
-          setTimeout(connectSubscriber, 3000);
+          reconnectTimer = setTimeout(connectSubscriber, 3000);
+          reconnectTimer.unref?.();
         }
       });
     } catch (_) {}
@@ -190,6 +202,10 @@ export default function cockpitTurnStatus(pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     if (namePollTimer) {
       clearInterval(namePollTimer);
       namePollTimer = null;
