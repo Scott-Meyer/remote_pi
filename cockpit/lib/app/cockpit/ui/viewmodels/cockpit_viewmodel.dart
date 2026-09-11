@@ -5510,9 +5510,10 @@ class CockpitViewModel extends ChangeNotifier {
           termCwd,
           title: desc['title'] as String?,
           replay: raw == null ? null : 'c$raw\x1b[<9u\r\n',
-          startupCommand: claudeSid == null || claudeSid.isEmpty
-              ? null
-              : harness.resumeCommand(claudeSid),
+          startupCommand:
+              claudeSid == null || claudeSid.isEmpty || harness == null
+                  ? null
+                  : harness.resumeCommand(claudeSid),
           // Re-arma a trava ANTES de o shell subir e re-emitir OSC-title: o nome
           // manual continua vencendo o título dinâmico após o reinício.
           manualLabel: desc['label'] as String?,

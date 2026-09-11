@@ -130,6 +130,71 @@ fn str_field(v: &Value, key: &str) -> String {
     }
 }
 
+/// Verifica se o payload de hook é de um subagente.
+///
+/// Subagentes não são a sessão principal da aba: seus eventos de ciclo de vida
+/// (término de tarefa, paradas, notificações de subagente) NÃO devem mover o
+/// indicador de turno da aba, tocar chime ou disparar notificações do SO.
+pub fn is_subagent(event: &str, json: &Value) -> bool {
+    // 1. Nomes de evento específicos de subagente
+    match event {
+        "SubagentStart" | "SubagentStop" | "SubagentFinish" | "SubagentEnd" => return true,
+        _ => {}
+    }
+
+    // 2. Flag booleana explícita (Claude Code / Codex / wrappers)
+    if json.get("is_subagent").and_then(Value::as_bool) == Some(true) {
+        return true;
+    }
+
+    // 3. Identificador de subagente presente e não-vazio
+    if let Some(sub_id) = json.get("subagent_id").and_then(Value::as_str) {
+        if !sub_id.trim().is_empty() {
+            return true;
+        }
+    }
+
+    // 4. Sessão ou tool use pai (indica que este processo roda sob outro agente)
+    if let Some(parent_sid) = json.get("parent_session_id").and_then(Value::as_str) {
+        if !parent_sid.trim().is_empty() {
+            return true;
+        }
+    }
+    if let Some(parent_tuid) = json.get("parent_tool_use_id").and_then(Value::as_str) {
+        if !parent_tuid.trim().is_empty() {
+            return true;
+        }
+    }
+
+    // 5. Tipo ou papel de agente indicando subagente
+    if let Some(agent_type) = json.get("agent_type").and_then(Value::as_str) {
+        let t = agent_type.trim().to_lowercase();
+        if t == "subagent" || t == "sub_agent" || t == "worker" || t == "task" {
+            return true;
+        }
+    }
+
+    // 6. Notificações sobre conclusão ou progresso de tarefas secundárias / subagentes
+    let notif_type = str_field(json, "notification_type").to_lowercase();
+    if notif_type.contains("subagent")
+        || notif_type.contains("background_task")
+        || notif_type.contains("task_completed")
+    {
+        return true;
+    }
+    let msg = str_field(json, "message").to_lowercase();
+    if msg.contains("subagent completed")
+        || msg.contains("subagent finished")
+        || msg.contains("subagent stopped")
+        || msg.contains("background task completed")
+        || msg.contains("background task finished")
+    {
+        return true;
+    }
+
+    false
+}
+
 /// Mapeia o evento de hook num status de turno, ou `None` se o evento não deve
 /// mover o indicador.
 ///
@@ -146,6 +211,11 @@ fn str_field(v: &Value, key: &str) -> String {
 ///   ignorados de propósito: subagente e compactação não devem mexer no
 ///   indicador da aba, que representa a sessão principal.
 pub fn status_for(event: &str, json: &Value) -> Option<&'static str> {
+    // Subagentes nunca movem o status da aba (não devem gerar idle, waiting ou working).
+    if is_subagent(event, json) {
+        return None;
+    }
+
     match event {
         "UserPromptSubmit" | "PostToolUse" => Some("working"),
         "PreToolUse" => {
@@ -248,6 +318,32 @@ mod tests {
                 "{ev} não deve mover a aba"
             );
         }
+    }
+
+    #[test]
+    fn subagentes_nao_movem_status_mesmo_em_eventos_de_fim() {
+        // Evento Stop vindo de subagente não deve gerar idle
+        let sub_bool = json!({"is_subagent": true});
+        assert_eq!(status_for("Stop", &sub_bool), None);
+
+        let sub_id = json!({"subagent_id": "sub_worker_123"});
+        assert_eq!(status_for("Stop", &sub_id), None);
+
+        let sub_parent = json!({"parent_session_id": "main_sess_456"});
+        assert_eq!(status_for("Stop", &sub_parent), None);
+
+        let sub_parent_tool = json!({"parent_tool_use_id": "tool_789"});
+        assert_eq!(status_for("Stop", &sub_parent_tool), None);
+
+        let sub_type = json!({"agent_type": "subagent"});
+        assert_eq!(status_for("Stop", &sub_type), None);
+
+        // Notificações de subagente também não devem gerar waiting ou idle
+        let notif_sub = json!({"notification_type": "TASK_COMPLETED", "message": "Subagent finished"});
+        assert_eq!(status_for("Notification", &notif_sub), None);
+
+        let notif_bg = json!({"message": "Background task completed"});
+        assert_eq!(status_for("Notification", &notif_bg), None);
     }
 
     #[test]

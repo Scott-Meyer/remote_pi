@@ -9,6 +9,9 @@ void main() {
       const id = '019ff255-62c9-7ba1-8481-63c8803ef51e';
       expect(AgentHarness.claude.resumeCommand(id), 'claude --resume $id');
       expect(AgentHarness.codex.resumeCommand(id), 'codex resume $id');
+      expect(AgentHarness.pi.resumeCommand(id), 'pi --session $id');
+      expect(AgentHarness.pi.resumeCommand(''), 'pi -c');
+      expect(AgentHarness.pi.resumeCommand('latest'), 'pi -c');
     });
   });
 
@@ -16,14 +19,19 @@ void main() {
     test('reconhece os nomes do wire', () {
       expect(AgentHarness.fromWire('claude'), AgentHarness.claude);
       expect(AgentHarness.fromWire('codex'), AgentHarness.codex);
+      expect(AgentHarness.fromWire('pi'), AgentHarness.pi);
     });
 
-    test('ausente ou desconhecido cai em claude (compat)', () {
+    test('ausente ou vazio cai em claude (compat)', () {
       // Layout salvo antes desta distinção, ou helper antigo sem `--harness`:
       // nos dois casos só o Claude tinha hooks instalados.
       expect(AgentHarness.fromWire(null), AgentHarness.claude);
       expect(AgentHarness.fromWire(''), AgentHarness.claude);
-      expect(AgentHarness.fromWire('gemini'), AgentHarness.claude);
+    });
+
+    test('desconhecido devolve null em vez de adivinhar claude', () {
+      expect(AgentHarness.fromWire('gemini'), isNull);
+      expect(AgentHarness.fromWire('unknown'), isNull);
     });
   });
 }

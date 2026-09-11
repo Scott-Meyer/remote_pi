@@ -170,6 +170,15 @@ class TerminalStatusServerImpl implements TerminalStatusServer {
       final tx = (decoded['tx'] ?? '').toString();
       final ev = (decoded['ev'] ?? '').toString();
       final hn = (decoded['hn'] ?? '').toString();
+
+      // Subagentes não representam a sessão principal da aba: ignora eventos
+      // emitidos por subagentes para não tocar chime ou disparar notificações.
+      final isSub = decoded['sub'] == true ||
+          decoded['is_subagent'] == true ||
+          (decoded['subagent_id'] != null &&
+              decoded['subagent_id'].toString().trim().isNotEmpty);
+      if (isSub || ev.startsWith('Subagent')) return (null, null);
+
       _onUpdate?.call(
         ClaudeStatusUpdate(
           paneId: paneId,

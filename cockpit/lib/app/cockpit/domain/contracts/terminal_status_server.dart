@@ -61,12 +61,17 @@ enum AgentHarness {
         : 'pi --session $sessionId',
   };
 
-  /// Converte o nome do wire. Desconhecido ou ausente cai em [claude]: layouts
-  /// e helpers anteriores a esta distinção só podiam ser do Claude.
-  static AgentHarness fromWire(String? wire) => AgentHarness.values.firstWhere(
-    (h) => h.wire == wire,
-    orElse: () => AgentHarness.claude,
-  );
+  /// Converte o nome do wire. Ausente ou vazio cai em [claude] (layouts legados
+  /// ou helpers antigos sem `--harness`). Desconhecido não-vazio devolve `null`
+  /// em vez de adivinhar [claude] (evita tentar `claude --resume` em harnesses
+  /// incompatíveis).
+  static AgentHarness? fromWire(String? wire) {
+    if (wire == null || wire.isEmpty) return AgentHarness.claude;
+    for (final h in AgentHarness.values) {
+      if (h.wire == wire) return h;
+    }
+    return null;
+  }
 }
 
 /// Comando enviado pela **CLI interna** `cockpit` (binário em `~/.cockpit/bin`)
