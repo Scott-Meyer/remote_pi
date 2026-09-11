@@ -148,4 +148,20 @@ describe("saveLocalConfig — unaffected by env (still writes the file)", () => 
     delete process.env[ENV]; // ensure we read the file back, not any env
     expect(loadLocalConfig(cwd)).toEqual({ agent_name: "saved", auto_start_relay: true });
   });
+
+  test("qualifies unqualified name with workspace env", () => {
+    process.env.COCKPIT_WORKSPACE_NAME = "acme-repo";
+    const raw = "worker";
+    const canonical = raw.includes(":") ? raw : `${process.env.COCKPIT_WORKSPACE_NAME}:${raw}`;
+    expect(canonical).toBe("acme-repo:worker");
+    delete process.env.COCKPIT_WORKSPACE_NAME;
+  });
+
+  test("preserves already qualified name", () => {
+    process.env.COCKPIT_WORKSPACE_NAME = "acme-repo";
+    const raw = "other-repo:worker";
+    const canonical = raw.includes(":") ? raw : `${process.env.COCKPIT_WORKSPACE_NAME}:${raw}`;
+    expect(canonical).toBe("other-repo:worker");
+    delete process.env.COCKPIT_WORKSPACE_NAME;
+  });
 });

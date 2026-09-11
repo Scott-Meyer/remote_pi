@@ -108,7 +108,7 @@ import {
 } from "./session/local_config.js";
 import { runSetupWizard, type WizardUI } from "./session/setup_wizard.js";
 import { updateFooter, type FooterState } from "./ui/footer.js";
-import { join, dirname, resolve } from "node:path";
+import { join, dirname, resolve, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chmodSync, mkdtempSync, mkdirSync, copyFileSync, existsSync, unlinkSync, readFileSync, writeFileSync, realpathSync } from "node:fs";
 import { createInterface } from "node:readline";
@@ -2569,9 +2569,20 @@ const extension: ExtensionFactory = (pi: ExtensionAPI): void => {
   let _renamingInFlight = false;
   let _pendingRename: string | null = null;
 
+  function _toCanonicalAgentName(raw: string): string {
+    if (!raw) return raw;
+    if (raw.includes(":")) return raw;
+    const ws = process.env.COCKPIT_WORKSPACE_NAME || basename(process.cwd()) || "workspace";
+    return `${ws}:${raw}`;
+  }
+
   async function _syncSessionName() {
-    const name = pi.getSessionName()?.trim();
-    if (!name) return;
+    const raw = pi.getSessionName()?.trim();
+    if (!raw) return;
+    const name = _toCanonicalAgentName(raw);
+    if (pi.getSessionName() !== name) {
+      pi.setSessionName(name);
+    }
     const currentName = loadLocalConfig(process.cwd()).agent_name;
     if (name === currentName && !_pendingRename) return;
 
