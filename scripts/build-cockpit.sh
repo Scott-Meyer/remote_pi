@@ -56,6 +56,12 @@ cp "$CLI_DIR/target/release/cockpit" "$HOME/.cockpit/bin/cockpit"
 chmod +x "$HOME/.cockpit/bin/cockpit"
 ln -sf cockpit "$HOME/.cockpit/bin/ck"
 
+if [ -f "$COCKPIT_DIR/assets/extensions/cockpit.ts" ]; then
+  echo "==> Installing Pi extension to ~/.pi/agent/extensions..."
+  mkdir -p "$HOME/.pi/agent/extensions"
+  cp "$COCKPIT_DIR/assets/extensions/cockpit.ts" "$HOME/.pi/agent/extensions/cockpit.ts"
+fi
+
 echo "==> Preparing Flutter dependencies..."
 cd "$COCKPIT_DIR"
 flutter pub get

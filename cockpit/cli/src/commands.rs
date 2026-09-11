@@ -243,6 +243,84 @@ pub fn close_tab(args: &[String]) -> ! {
     std::process::exit(0)
 }
 
+// ---- rename-tab -------------------------------------------------------------
+
+const RENAME_TAB_HELP: &str = "cockpit rename-tab [<label|tab-id>] <new-name> [--tab-id <id>] [--json]
+  Renames a tab in Cockpit and locks its manual label.
+  Without target, renames the current tab ($COCKPIT_TAB_ID).
+  Prints the tab id.";
+
+pub fn rename_tab(args: &[String]) -> ! {
+    let mut target: Option<String> = None;
+    let mut new_name: Option<String> = None;
+    let mut tab_id: Option<String> = None;
+    let mut as_json = false;
+
+    let mut i = 0usize;
+    while i < args.len() {
+        let a = args[i].as_str();
+        if a == "--help" || a == "-h" {
+            println!("{RENAME_TAB_HELP}");
+            std::process::exit(0);
+        }
+        if a == "--json" {
+            as_json = true;
+            i += 1;
+            continue;
+        }
+        if a == "--tab-id" || a == "-t" {
+            if i + 1 >= args.len() {
+                die("cockpit: --tab-id requires a value", 2);
+            }
+            i += 1;
+            tab_id = Some(args[i].clone());
+            i += 1;
+            continue;
+        } else if let Some(v) = a.strip_prefix("--tab-id=") {
+            tab_id = Some(v.to_string());
+            i += 1;
+            continue;
+        }
+        if a.starts_with('-') {
+            die(&format!("cockpit: unknown flag \"{a}\""), 2);
+        }
+        if target.is_none() {
+            target = Some(a.to_string());
+        } else if new_name.is_none() {
+            new_name = Some(a.to_string());
+        }
+        i += 1;
+    }
+
+    let (target_val, raw_name) = match (target, new_name) {
+        (Some(t), Some(n)) => (Some(t), n),
+        (Some(n), None) => (None, n),
+        _ => die("cockpit rename-tab: missing new name", 2),
+    };
+
+    let mut cmd_args = Map::new();
+    if let Some(t) = target_val.filter(|t| !t.is_empty()) {
+        cmd_args.insert("target".into(), json!(t));
+    }
+    cmd_args.insert("name".into(), json!(raw_name));
+
+    let mut req = json!({"cmd": "rename-tab", "args": Value::Object(cmd_args)});
+    with_tab_id(&mut req, tab_id.or_else(self_tab_id));
+
+    let resp = transport::request(req, DEFAULT_TIMEOUT);
+    if !is_ok(&resp) {
+        fail_with(&resp);
+    }
+    let data = resp.get("data").cloned().unwrap_or_else(|| json!({}));
+    if as_json {
+        println!("{}", data);
+    } else {
+        let id = data.get("tabId").and_then(Value::as_str).unwrap_or("");
+        println!("{id}");
+    }
+    std::process::exit(0)
+}
+
 // ---- workspaces -------------------------------------------------------------
 
 const NEW_WORKSPACE_HELP: &str = "cockpit new-workspace <path> [--host <ssh-target>] [--name <title>] [--json]

@@ -93,6 +93,26 @@ class TerminalStatusServerImpl implements TerminalStatusServer {
     ).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 
+  final Map<String, Set<Socket>> _tabSubscribers = {};
+
+  @override
+  void broadcastTabEvent(String tabId, Map<String, dynamic> event) {
+    final subs = _tabSubscribers[tabId];
+    if (subs == null || subs.isEmpty) return;
+    final line = '${jsonEncode(event)}\n';
+    final bytes = utf8.encode(line);
+    for (final s in subs.toList()) {
+      try {
+        s.add(bytes);
+      } catch (_) {
+        subs.remove(s);
+        try {
+          s.destroy();
+        } catch (_) {}
+      }
+    }
+  }
+
   void _handleConnection(Socket socket) {
     // Despacha na PRIMEIRA linha (`\n`), não no fim da conexão: o `cockpit-hook`
     // (status) fecha logo após enviar, mas a CLI (`type:"cmd"`) mantém o socket
@@ -101,13 +121,61 @@ class TerminalStatusServerImpl implements TerminalStatusServer {
     // uma linha de resposta e destrói.
     late StreamSubscription<String> sub;
     var handled = false;
+    var isSubscribed = false;
+    String? subscribedTabId;
+
+    void cleanupSubscription() {
+      if (subscribedTabId != null) {
+        _tabSubscribers[subscribedTabId]?.remove(socket);
+      }
+      try {
+        socket.destroy();
+      } catch (_) {}
+    }
+
     sub = socket
         .cast<List<int>>()
         .transform(utf8.decoder)
         .transform(const LineSplitter())
         .listen(
           (line) async {
+            if (isSubscribed) return;
             if (handled) return;
+
+            // Se for comando de subscribe, valida token (Windows) e mantém o
+            // socket aberto para receber pushes broadcastTabEvent.
+            final raw = line.trim();
+            if (raw.isNotEmpty) {
+              try {
+                final decoded = jsonDecode(raw);
+                if (decoded is Map &&
+                    decoded['type'] == 'cmd' &&
+                    decoded['cmd'] == 'subscribe') {
+                  if (_token != null && decoded['tok'] != _token) {
+                    socket.add(utf8.encode(
+                      '${jsonEncode(const CockpitCommandResult.fail('invalid token').toJson())}\n',
+                    ));
+                    await socket.flush();
+                    socket.destroy();
+                    handled = true;
+                    return;
+                  }
+                  final tabId = (decoded['tabId'] ?? '').toString();
+                  if (tabId.isNotEmpty) {
+                    handled = true;
+                    isSubscribed = true;
+                    subscribedTabId = tabId;
+                    (_tabSubscribers[tabId] ??= {}).add(socket);
+                    socket.add(utf8.encode(
+                      '${jsonEncode(const CockpitCommandResult.ok({'subscribed': true}).toJson())}\n',
+                    ));
+                    await socket.flush();
+                    return; // Mantém sub aberta para observar onDone/onError!
+                  }
+                }
+              } catch (_) {}
+            }
+
             handled = true;
             await sub.cancel();
             String? response;
@@ -131,9 +199,13 @@ class TerminalStatusServerImpl implements TerminalStatusServer {
             // junto o `cockpit` que esperava o `ok`.
             after?.call();
           },
-          onError: (_) => socket.destroy(),
+          onError: (_) => cleanupSubscription(),
           onDone: () {
-            if (!handled) socket.destroy();
+            if (isSubscribed) {
+              cleanupSubscription();
+            } else if (!handled) {
+              socket.destroy();
+            }
           },
           cancelOnError: true,
         );
@@ -223,6 +295,14 @@ class TerminalStatusServerImpl implements TerminalStatusServer {
 
   @override
   Future<void> stop() async {
+    for (final subs in _tabSubscribers.values) {
+      for (final s in subs) {
+        try {
+          s.destroy();
+        } catch (_) {}
+      }
+    }
+    _tabSubscribers.clear();
     await _server?.close();
     _server = null;
     _onUpdate = null;

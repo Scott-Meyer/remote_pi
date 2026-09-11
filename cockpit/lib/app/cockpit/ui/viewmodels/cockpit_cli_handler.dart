@@ -272,6 +272,41 @@ class CockpitCliHandler {
           'tabId': s.id,
         }, () => _vm.closeTab(closingLeaf, closingId));
 
+      // `cockpit rename-tab [<label|tab-id>] <new-name>` — define o rótulo
+      // manual da aba e atualiza a UI do Cockpit imediatamente. Sem alvo,
+      // renomeia a aba emissora.
+      case 'rename-tab':
+        final target = (c.args['target'] ?? '').toString();
+        final rawLabel =
+            (c.args['name'] ?? c.args['label'] ?? '').toString().trim();
+        if (rawLabel.isEmpty) {
+          return const CockpitCommandResult.fail('missing label/name');
+        }
+        final PaneItem? s;
+        if (target.isNotEmpty) {
+          final resolved = _resolvePaneTarget(target);
+          if (resolved case Failure(:final error)) {
+            return CockpitCommandResult.fail(error);
+          }
+          s = (resolved as Success<PaneItem, String>).value;
+        } else {
+          final id = c.tabId;
+          if (id == null || id.isEmpty) {
+            return const CockpitCommandResult.fail(
+              'missing target (pass <label|tab-id> or run inside a Cockpit terminal)',
+            );
+          }
+          s = _vm.session(id);
+          if (s == null) {
+            return CockpitCommandResult.fail('tab "$id" does not exist');
+          }
+        }
+        _vm.setPaneLabel(s.id, rawLabel);
+        return CockpitCommandResult.ok({
+          'tabId': s.id,
+          'label': rawLabel,
+        });
+
       // `cockpit orchestrate <file.ckp>` — aplica um layout de panes no
       // workspace ativo. A CLI já resolveu o path pro absoluto. Merge
       // idempotente (tab de mesmo nome = pulada); devolve {created, skipped}.

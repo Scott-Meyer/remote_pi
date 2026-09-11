@@ -4264,6 +4264,11 @@ class CockpitViewModel extends ChangeNotifier {
     if (s is FileViewerSession) unawaited(_writeKanbanBoardTitle(s, label));
     _scheduleSave(s.projectId);
     notifyListeners();
+    _statusServer.broadcastTabEvent(sessionId, {
+      'event': 'tab_renamed',
+      'name': label,
+      'paneId': sessionId,
+    });
   }
 
   /// Restaura o título automático de uma aba (descarta o rótulo manual).

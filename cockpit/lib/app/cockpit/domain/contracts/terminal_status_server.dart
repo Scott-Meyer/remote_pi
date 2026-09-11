@@ -166,6 +166,9 @@ abstract class TerminalStatusServer {
     Future<CockpitCommandResult> Function(CockpitCommand command)? onCommand,
   });
 
+  /// Envia um evento em broadcast para todos os clientes inscritos na aba [tabId].
+  void broadcastTabEvent(String tabId, Map<String, dynamic> event) {}
+
   /// Derruba o servidor (e remove o socket no POSIX).
   Future<void> stop();
 }

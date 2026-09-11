@@ -66,6 +66,7 @@ fn main() {
         "mongo" => commands::mongo(args),
         "new-tab" => commands::new_tab(args),
         "close-tab" => commands::close_tab(args),
+        "rename-tab" => commands::rename_tab(args),
         "new-workspace" | "open-workspace" | "new-remote-workspace" => {
             commands::new_workspace(args)
         }
