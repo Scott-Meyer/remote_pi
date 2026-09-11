@@ -161,7 +161,7 @@ class TerminalStatusServerImpl implements TerminalStatusServer {
           null,
         );
       }
-      if (isCmd) return _dispatchCommand(decoded);
+      if (isCmd) return await _dispatchCommand(decoded);
       // Caminho de status (default / `type` ausente): fire-and-forget.
       final paneId = (decoded['paneId'] ?? '').toString();
       final status = (decoded['st'] ?? '').toString();
@@ -171,13 +171,12 @@ class TerminalStatusServerImpl implements TerminalStatusServer {
       final ev = (decoded['ev'] ?? '').toString();
       final hn = (decoded['hn'] ?? '').toString();
 
-      // Subagentes não representam a sessão principal da aba: ignora eventos
-      // emitidos por subagentes para não tocar chime ou disparar notificações.
-      final isSub = decoded['sub'] == true ||
+      final isSubagent =
+          decoded['sub'] == true ||
           decoded['is_subagent'] == true ||
           (decoded['subagent_id'] != null &&
-              decoded['subagent_id'].toString().trim().isNotEmpty);
-      if (isSub || ev.startsWith('Subagent')) return (null, null);
+              decoded['subagent_id'].toString().trim().isNotEmpty) ||
+          ev.startsWith('Subagent');
 
       _onUpdate?.call(
         ClaudeStatusUpdate(
@@ -187,6 +186,7 @@ class TerminalStatusServerImpl implements TerminalStatusServer {
           sessionId: sid.isEmpty ? null : sid,
           transcriptPath: tx.isEmpty ? null : tx,
           harness: hn.isEmpty ? null : hn,
+          isSubagent: isSubagent,
         ),
       );
       return (null, null);

@@ -130,66 +130,44 @@ fn str_field(v: &Value, key: &str) -> String {
     }
 }
 
-/// Verifica se o payload de hook é de um subagente.
+/// `true` when a hook belongs to a child/background agent rather than the
+/// interactive session that owns the Cockpit tab.
 ///
-/// Subagentes não são a sessão principal da aba: seus eventos de ciclo de vida
-/// (término de tarefa, paradas, notificações de subagente) NÃO devem mover o
-/// indicador de turno da aba, tocar chime ou disparar notificações do SO.
-pub fn is_subagent(event: &str, json: &Value) -> bool {
-    // 1. Nomes de evento específicos de subagente
-    match event {
-        "SubagentStart" | "SubagentStop" | "SubagentFinish" | "SubagentEnd" => return true,
-        _ => {}
+/// Claude Code and Codex put `agent_id` on hooks emitted *inside* a subagent.
+/// Claude also emits `Notification` from the parent when a background agent
+/// finishes or needs input; those notifications have no `agent_id`, so their
+/// documented notification types need a separate check. The remaining fields
+/// cover older wrappers and Pi-compatible bridges.
+fn is_subagent(event: &str, json: &Value) -> bool {
+    if matches!(
+        event,
+        "SubagentStart" | "SubagentStop" | "SubagentFinish" | "SubagentEnd"
+    ) {
+        return true;
     }
 
-    // 2. Flag booleana explícita (Claude Code / Codex / wrappers)
+    for key in [
+        "agent_id",
+        "subagent_id",
+        "parent_session_id",
+        "parent_tool_use_id",
+    ] {
+        if !str_field(json, key).trim().is_empty() {
+            return true;
+        }
+    }
     if json.get("is_subagent").and_then(Value::as_bool) == Some(true) {
         return true;
     }
 
-    // 3. Identificador de subagente presente e não-vazio
-    if let Some(sub_id) = json.get("subagent_id").and_then(Value::as_str) {
-        if !sub_id.trim().is_empty() {
-            return true;
-        }
-    }
-
-    // 4. Sessão ou tool use pai (indica que este processo roda sob outro agente)
-    if let Some(parent_sid) = json.get("parent_session_id").and_then(Value::as_str) {
-        if !parent_sid.trim().is_empty() {
-            return true;
-        }
-    }
-    if let Some(parent_tuid) = json.get("parent_tool_use_id").and_then(Value::as_str) {
-        if !parent_tuid.trim().is_empty() {
-            return true;
-        }
-    }
-
-    // 5. Tipo ou papel de agente indicando subagente
-    if let Some(agent_type) = json.get("agent_type").and_then(Value::as_str) {
-        let t = agent_type.trim().to_lowercase();
-        if t == "subagent" || t == "sub_agent" || t == "worker" || t == "task" {
-            return true;
-        }
-    }
-
-    // 6. Notificações sobre conclusão ou progresso de tarefas secundárias / subagentes
-    let notif_type = str_field(json, "notification_type").to_lowercase();
-    if notif_type.contains("subagent")
-        || notif_type.contains("background_task")
-        || notif_type.contains("task_completed")
-    {
-        return true;
-    }
-    let msg = str_field(json, "message").to_lowercase();
-    if msg.contains("subagent completed")
-        || msg.contains("subagent finished")
-        || msg.contains("subagent stopped")
-        || msg.contains("background task completed")
-        || msg.contains("background task finished")
-    {
-        return true;
+    if event == "Notification" {
+        return matches!(
+            str_field(json, "notification_type").as_str(),
+            // Current Claude Code background-agent notifications.
+            "agent_completed" | "agent_needs_input"
+                // Older/third-party task notification labels.
+                | "task_notification" | "task_completed" | "background_task_completed"
+        );
     }
 
     false
@@ -211,7 +189,7 @@ pub fn is_subagent(event: &str, json: &Value) -> bool {
 ///   ignorados de propósito: subagente e compactação não devem mexer no
 ///   indicador da aba, que representa a sessão principal.
 pub fn status_for(event: &str, json: &Value) -> Option<&'static str> {
-    // Subagentes nunca movem o status da aba (não devem gerar idle, waiting ou working).
+    // Only the interactive session that owns the tab may move its status.
     if is_subagent(event, json) {
         return None;
     }
@@ -321,29 +299,51 @@ mod tests {
     }
 
     #[test]
-    fn subagentes_nao_movem_status_mesmo_em_eventos_de_fim() {
-        // Evento Stop vindo de subagente não deve gerar idle
-        let sub_bool = json!({"is_subagent": true});
-        assert_eq!(status_for("Stop", &sub_bool), None);
+    fn eventos_emitidos_dentro_de_subagente_sao_inertes() {
+        // `agent_id` is the documented Claude Code/Codex marker and applies to
+        // tool hooks too—not just SubagentStop.
+        for ev in ["UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"] {
+            assert_eq!(
+                status_for(ev, &json!({"agent_id": "child-123"})),
+                None,
+                "{ev} de subagente não deve mover a aba"
+            );
+        }
 
-        let sub_id = json!({"subagent_id": "sub_worker_123"});
-        assert_eq!(status_for("Stop", &sub_id), None);
+        for payload in [
+            json!({"is_subagent": true}),
+            json!({"subagent_id": "child-123"}),
+            json!({"parent_session_id": "main-456"}),
+            json!({"parent_tool_use_id": "tool-789"}),
+        ] {
+            assert_eq!(status_for("Stop", &payload), None);
+        }
+    }
 
-        let sub_parent = json!({"parent_session_id": "main_sess_456"});
-        assert_eq!(status_for("Stop", &sub_parent), None);
+    #[test]
+    fn notificacoes_de_agente_em_background_sao_inertes() {
+        for kind in [
+            "agent_completed",
+            "agent_needs_input",
+            "task_notification",
+            "task_completed",
+            "background_task_completed",
+        ] {
+            assert_eq!(
+                status_for("Notification", &json!({"notification_type": kind})),
+                None,
+                "Notification {kind} não pertence ao turno da aba"
+            );
+        }
 
-        let sub_parent_tool = json!({"parent_tool_use_id": "tool_789"});
-        assert_eq!(status_for("Stop", &sub_parent_tool), None);
-
-        let sub_type = json!({"agent_type": "subagent"});
-        assert_eq!(status_for("Stop", &sub_type), None);
-
-        // Notificações de subagente também não devem gerar waiting ou idle
-        let notif_sub = json!({"notification_type": "TASK_COMPLETED", "message": "Subagent finished"});
-        assert_eq!(status_for("Notification", &notif_sub), None);
-
-        let notif_bg = json!({"message": "Background task completed"});
-        assert_eq!(status_for("Notification", &notif_bg), None);
+        // Do not guess from prose: ordinary owner notifications still work.
+        assert_eq!(
+            status_for(
+                "Notification",
+                &json!({"notification_type": "permission_prompt", "message": "Agent completed setup"})
+            ),
+            Some("waiting")
+        );
     }
 
     #[test]

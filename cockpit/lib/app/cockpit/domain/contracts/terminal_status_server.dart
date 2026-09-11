@@ -9,6 +9,7 @@ class ClaudeStatusUpdate {
     this.sessionId,
     this.transcriptPath,
     this.harness,
+    this.isSubagent = false,
   });
 
   /// Id da aba (vem do env `COCKPIT_PANE_ID` injetado na PTV — roteamento).
@@ -29,10 +30,15 @@ class ClaudeStatusUpdate {
   /// Caminho do transcript `.jsonl` do agente.
   final String? transcriptPath;
 
-  /// Quem emitiu o evento: `claude` | `codex`. Vem do `--harness` que o
-  /// instalador grava no comando do hook; `null` em helpers antigos (que só
+  /// Quem emitiu o evento: `claude` | `codex` | `pi`. Vem do `--harness` que
+  /// o instalador grava no comando do hook; `null` em helpers antigos (que só
   /// existiam para o Claude — ver [AgentHarness.fromWire]).
   final String? harness;
+
+  /// Defesa no consumidor para bridges que encaminham explicitamente a origem.
+  /// O helper atual já descarta hooks de subagente antes do socket, mas clientes
+  /// legados/terceiros podem enviar `sub:true` diretamente.
+  final bool isSubagent;
 }
 
 /// Harness que roda numa aba de terminal. O Cockpit precisa distinguir para
@@ -50,15 +56,18 @@ enum AgentHarness {
 
   /// Comando que reata a sessão [sessionId] num shell novo.
   String resumeCommand(String sessionId) => switch (this) {
-    AgentHarness.claude => sessionId == 'latest' || sessionId.isEmpty
-        ? 'claude -c'
-        : 'claude --resume $sessionId',
-    AgentHarness.codex => sessionId == 'latest' || sessionId.isEmpty
-        ? 'codex resume --last'
-        : 'codex resume $sessionId',
-    AgentHarness.pi => sessionId == 'latest' || sessionId.isEmpty
-        ? 'pi -c'
-        : 'pi --session $sessionId',
+    AgentHarness.claude =>
+      sessionId == 'latest' || sessionId.isEmpty
+          ? 'claude -c'
+          : 'claude --resume $sessionId',
+    AgentHarness.codex =>
+      sessionId == 'latest' || sessionId.isEmpty
+          ? 'codex resume --last'
+          : 'codex resume $sessionId',
+    AgentHarness.pi =>
+      sessionId == 'latest' || sessionId.isEmpty
+          ? 'pi -c'
+          : 'pi --session $sessionId',
   };
 
   /// Converte o nome do wire. Ausente ou vazio cai em [claude] (layouts legados

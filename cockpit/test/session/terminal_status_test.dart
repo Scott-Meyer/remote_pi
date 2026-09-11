@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cockpit/app/cockpit/domain/contracts/terminal_gateway.dart';
+import 'package:cockpit/app/cockpit/domain/contracts/terminal_status_server.dart';
 import 'package:cockpit/app/core/utils/spawn_directory.dart';
 import 'package:cockpit/app/core/domain/entities/terminal_profile.dart';
 import 'package:cockpit/app/cockpit/ui/session/terminal_session.dart';
@@ -115,6 +116,24 @@ void main() {
       // Aprovou → PreToolUse('working') com turno ainda ativo → volta a working.
       s.applyClaudeStatus(status: TerminalStatus.working, isTurnStart: false);
       expect(s.isWorking, isTrue);
+      await s.dispose();
+    });
+
+    test('session id só é associado quando o harness é reconhecido', () async {
+      final s = _session();
+      s.applyClaudeStatus(
+        status: TerminalStatus.working,
+        sessionId: 'unknown-session',
+      );
+      expect(s.claudeSessionId, isNull);
+
+      s.applyClaudeStatus(
+        status: TerminalStatus.working,
+        sessionId: 'pi-session',
+        harness: AgentHarness.pi,
+      );
+      expect(s.claudeSessionId, 'pi-session');
+      expect(s.agentHarness, AgentHarness.pi);
       await s.dispose();
     });
   });

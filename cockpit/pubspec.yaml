@@ -284,6 +284,7 @@ flutter:
     - assets/file_icons/
     - assets/db_icons/
     - assets/harness_icons/
+    - assets/hooks/
     - assets/sounds/
     - assets/branding/
     # Plano 58 — pipeline local do preview de markdown (markdown-it +

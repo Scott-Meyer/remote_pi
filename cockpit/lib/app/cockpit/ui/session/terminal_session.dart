@@ -230,8 +230,8 @@ class TerminalSession extends PaneItem {
     // resume com o id do harness errado.
     if (sessionId != null && sessionId.isNotEmpty && harness != null) {
       agentHarness = harness;
+      claudeSessionId = sessionId;
     }
-    if (sessionId != null && sessionId.isNotEmpty) claudeSessionId = sessionId;
     if (transcriptPath != null && transcriptPath.isNotEmpty) {
       this.transcriptPath = transcriptPath;
     }

@@ -5220,7 +5220,24 @@ class CockpitViewModel extends ChangeNotifier {
   /// socket do [TerminalStatusServer]). Roteia pela [ClaudeStatusUpdate.paneId].
   void _onClaudeStatus(ClaudeStatusUpdate u) {
     final s = _sessions[u.paneId];
-    if (s is! TerminalSession) return;
+    if (s is! TerminalSession || u.isSubagent) return;
+
+    // Unknown non-empty harnesses are not legacy Claude sessions. Ignoring the
+    // update is safer than turning an unsupported/background bridge event into
+    // an idle transition (and therefore a chime/notification).
+    final harness = AgentHarness.fromWire(u.harness);
+    if (u.harness != null && u.harness!.isNotEmpty && harness == null) return;
+
+    // The wire contract is closed. Previously every unknown value became idle,
+    // so a future "completed"-style subagent status could finish the main tab.
+    final status = switch (u.status) {
+      'working' => TerminalStatus.working,
+      'waiting' => TerminalStatus.waiting,
+      'idle' => TerminalStatus.idle,
+      _ => null,
+    };
+    if (status == null) return;
+
     if (kDebugMode) {
       debugPrint(
         '[status] ${DateTime.now().toIso8601String().substring(11, 23)} '
@@ -5229,11 +5246,7 @@ class CockpitViewModel extends ChangeNotifier {
     }
     final hadSid = s.claudeSessionId;
     s.applyClaudeStatus(
-      status: switch (u.status) {
-        'working' => TerminalStatus.working,
-        'waiting' => TerminalStatus.waiting,
-        _ => TerminalStatus.idle,
-      },
+      status: status,
       // `UserPromptSubmit` marca o INÍCIO de um turno novo — o único `working`
       // que sempre vale, mesmo logo após um `idle` (ex.: mensagem enfileirada).
       // Os demais `working` (Pre/PostToolUse) são atividade mid-turn e podem ser
@@ -5241,7 +5254,7 @@ class CockpitViewModel extends ChangeNotifier {
       isTurnStart: u.event == 'UserPromptSubmit',
       sessionId: u.sessionId,
       transcriptPath: u.transcriptPath,
-      harness: AgentHarness.fromWire(u.harness),
+      harness: harness,
     );
     // O session-id do agente chega assíncrono pelo hook (não numa mutação de
     // layout), então persiste o layout quando ele MUDA — senão `claude_sid`
@@ -5512,8 +5525,8 @@ class CockpitViewModel extends ChangeNotifier {
           replay: raw == null ? null : 'c$raw\x1b[<9u\r\n',
           startupCommand:
               claudeSid == null || claudeSid.isEmpty || harness == null
-                  ? null
-                  : harness.resumeCommand(claudeSid),
+              ? null
+              : harness.resumeCommand(claudeSid),
           // Re-arma a trava ANTES de o shell subir e re-emitir OSC-title: o nome
           // manual continua vencendo o título dinâmico após o reinício.
           manualLabel: desc['label'] as String?,

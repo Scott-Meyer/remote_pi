@@ -79,6 +79,7 @@ Future<void> main() async {
 /// Mapeia o evento de hook do Claude Code num status de turno, ou `null` se o
 /// evento não deve mover o indicador.
 String? _statusFor(String event, Map<dynamic, dynamic> json) {
+  if (_isSubagent(event, json)) return null;
   switch (event) {
     case 'UserPromptSubmit':
     case 'PostToolUse':
@@ -104,4 +105,32 @@ String? _statusFor(String event, Map<dynamic, dynamic> json) {
     default:
       return null;
   }
+}
+
+bool _isSubagent(String event, Map<dynamic, dynamic> json) {
+  if (<String>{
+    'SubagentStart',
+    'SubagentStop',
+    'SubagentFinish',
+    'SubagentEnd',
+  }.contains(event)) {
+    return true;
+  }
+  for (final key in <String>[
+    'agent_id',
+    'subagent_id',
+    'parent_session_id',
+    'parent_tool_use_id',
+  ]) {
+    if ((json[key] ?? '').toString().trim().isNotEmpty) return true;
+  }
+  if (json['is_subagent'] == true) return true;
+  if (event != 'Notification') return false;
+  return <String>{
+    'agent_completed',
+    'agent_needs_input',
+    'task_notification',
+    'task_completed',
+    'background_task_completed',
+  }.contains((json['notification_type'] ?? '').toString());
 }
