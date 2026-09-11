@@ -2406,6 +2406,7 @@ const extension: ExtensionFactory = (pi: ExtensionAPI): void => {
         void _cmdRoot(initCtx);
       }
     }
+    _startNamePoll();
   });
 
   // Tear down THIS instance's live handles when the SDK replaces the session
@@ -2448,6 +2449,7 @@ const extension: ExtensionFactory = (pi: ExtensionAPI): void => {
     // module instances create their bridge in the factory.
     _extensionUiBridge?.dispose();
     _extensionUiBridge = null;
+    _stopNamePoll();
     // Drop captured ctxs immediately. On module-reuse hosts the same instance
     // survives session replacement; leaving `_lastCtx` pointing at the now-
     // stale command ctx is what crashed pi in _refreshFooter on peer reconnect
@@ -2551,18 +2553,65 @@ const extension: ExtensionFactory = (pi: ExtensionAPI): void => {
   pi.registerCommand("remote-pi stop",     { description: "Stop everything (leave local mesh + disconnect relay)", handler: async (_, ctx) => { _lastCtx = ctx; await _cmdStop(ctx); } });
   pi.registerCommand("remote-pi pair",     { description: "Show a QR code to pair a new mobile device (optional: --ttl <seconds>)", handler: async (args, ctx) => { _lastCtx = ctx; await _cmdPair(ctx, args.trim()); } });
   pi.registerCommand("remote-pi devices",  { description: "List paired mobile devices", handler: async (_, ctx) => { _lastCtx = ctx; await _cmdList(ctx); } });
-  pi.registerCommand("remote-pi rename",  { description: "Rename this agent in the current session (updates mesh + relay room)", handler: async (args, ctx) => { _lastCtx = ctx; await _renameAgent(args.trim()); } });
-
-  pi.on("session_info_changed", async (event, ctx) => {
-    _lastCtx = ctx;
-    const name = event.name?.trim();
-    if (name) {
-      const currentName = loadLocalConfig(process.cwd()).agent_name;
-      if (name !== currentName) {
-        await _renameAgent(name);
+  pi.registerCommand("remote-pi rename",  {
+    description: "Rename this agent in the current session (updates mesh + relay room)",
+    handler: async (args, ctx) => {
+      _lastCtx = ctx;
+      const newName = args.trim();
+      if (newName) {
+        pi.setSessionName(newName);
+        await _syncSessionName();
       }
-    }
+    },
   });
+
+  let _namePollTimer: NodeJS.Timeout | null = null;
+  let _renamingInFlight = false;
+  let _pendingRename: string | null = null;
+
+  async function _syncSessionName() {
+    const name = pi.getSessionName()?.trim();
+    if (!name) return;
+    const currentName = loadLocalConfig(process.cwd()).agent_name;
+    if (name === currentName && !_pendingRename) return;
+
+    _pendingRename = name;
+    if (_renamingInFlight) return;
+
+    _renamingInFlight = true;
+    try {
+      while (_pendingRename) {
+        const target = _pendingRename;
+        _pendingRename = null;
+        if (target !== loadLocalConfig(process.cwd()).agent_name) {
+          try {
+            await _renameAgent(target);
+          } catch (_) {
+            // best effort
+          }
+        }
+      }
+    } finally {
+      _renamingInFlight = false;
+    }
+  }
+
+  function _startNamePoll() {
+    if (_namePollTimer) clearInterval(_namePollTimer);
+    _namePollTimer = setInterval(() => {
+      void _syncSessionName();
+    }, 500);
+    _namePollTimer.unref?.();
+  }
+
+  function _stopNamePoll() {
+    if (_namePollTimer) {
+      clearInterval(_namePollTimer);
+      _namePollTimer = null;
+    }
+    _pendingRename = null;
+  }
+
   pi.registerCommand("remote-pi revoke", {
     description: "Revoke a paired device by its shortid",
     getArgumentCompletions: async (prefix) => _shortidCompletions(prefix),

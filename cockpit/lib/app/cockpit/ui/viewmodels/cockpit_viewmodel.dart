@@ -5123,6 +5123,10 @@ class CockpitViewModel extends ChangeNotifier {
       spawnEnv: <String, String>{
         'COCKPIT_TAB_ID': id,
         'COCKPIT_PANE_ID': id,
+        if (_projectById(projectId) != null) ...{
+          'COCKPIT_WORKSPACE_ID': projectId,
+          'COCKPIT_WORKSPACE_NAME': _projectById(projectId)!.name,
+        },
         ..._statusServer.hookEnv,
         // PATH escopado → o binário `cockpit` (CLI interna) resolve só nas abas.
         // SÓ no local: esse caminho é desta máquina e não existe no host. Pior,
