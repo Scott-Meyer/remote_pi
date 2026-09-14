@@ -83,6 +83,7 @@ import 'package:flightdeck/app/flightdeck/domain/entities/browser_capability.dar
 import 'package:flightdeck/app/flightdeck/ui/session/browser_session.dart';
 import 'package:flightdeck/app/flightdeck/ui/session/redis_browser_session.dart';
 import 'package:flightdeck/app/flightdeck/domain/contracts/task_discovery.dart';
+import 'package:flightdeck/app/flightdeck/domain/contracts/self_updater.dart';
 import 'package:flightdeck/app/flightdeck/domain/contracts/task_runner_gateway.dart';
 import 'package:flightdeck/app/flightdeck/ui/session/task_output_session.dart';
 import 'package:flightdeck/app/flightdeck/ui/session/task_terminal_store.dart';
@@ -156,6 +157,7 @@ class FlightDeckViewModel extends ChangeNotifier {
     this.remote,
     this.files,
     this.notifications,
+    this._selfUpdater,
   ) {
     _worktreeReconciler = WorktreeReconciler(_worktreeMgr);
     // Contexto do shell que o GitController precisa (page-scoped, mesma vida).
@@ -282,6 +284,12 @@ class FlightDeckViewModel extends ChangeNotifier {
 
   /// Badge/notificação do SO/chime de fim de turno (mesmo contrato).
   final SessionNotificationsController notifications;
+
+  /// Self-update engine (Sparkle on a real release, or the local dev-loop
+  /// updater on a build compiled with `FLIGHTDECK_UPDATE_CHANNEL=local`).
+  /// Passed through to [FlightDeckCliHandler] so the internal CLI's
+  /// `dev-build-ready`/`build-info` verbs can reach it.
+  final SelfUpdater _selfUpdater;
   final FileSearcher _fileSearcher;
   final AppLauncherGateway _launcher;
   final WorktreeManager _worktreeMgr;
@@ -675,6 +683,7 @@ class FlightDeckViewModel extends ChangeNotifier {
     _taskDiscovery,
     _taskRunner,
     _taskTerminals,
+    selfUpdater: _selfUpdater,
   );
 
   /// `true` se existe ao menos uma aba de agente **real** (não o placeholder
@@ -1358,6 +1367,12 @@ class FlightDeckViewModel extends ChangeNotifier {
         'host — run it here with curl instead',
     'orchestrate':
         'layout files describe panes on the FlightDeck machine; run it there',
+    'dev-build-ready':
+        'the local dev-update loop is specific to this FlightDeck desktop '
+        'install; a remote host has no local build to publish or channel to check',
+    'build-info':
+        'reports this FlightDeck desktop install\'s own compiled update '
+        'channel/build id; meaningless triggered from a remote host',
   };
 
   /// Atende um comando da CLI vindo de um host remoto. Roteia para o mesmo

@@ -40,6 +40,8 @@ class _NoSelfUpdater implements SelfUpdater {
   @override
   bool get isSupported => false;
   @override
+  bool get ignoresCheckFrequency => false;
+  @override
   SelfUpdateState get state => const SelfUpdateState.idle();
   @override
   Stream<SelfUpdateState> get changes => const Stream.empty();

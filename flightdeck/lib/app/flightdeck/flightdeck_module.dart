@@ -51,6 +51,7 @@ import 'package:flightdeck/app/flightdeck/domain/contracts/http_request_runner.d
 import 'package:flightdeck/app/flightdeck/domain/contracts/process_tree_provider.dart';
 import 'package:flightdeck/app/flightdeck/domain/services/terminal_harness_monitor.dart';
 import 'package:flightdeck/app/flightdeck/data/update/auto_updater_self_updater.dart';
+import 'package:flightdeck/app/flightdeck/data/update/local_dev_self_updater.dart';
 import 'package:flightdeck/app/flightdeck/data/update/noop_self_updater.dart';
 import 'package:flightdeck/app/flightdeck/data/update/update_checker_impl.dart';
 import 'package:flightdeck/app/flightdeck/data/update/url_opener_impl.dart';
@@ -353,6 +354,16 @@ UpdateTarget _updateTarget(String version) {
 /// artefato em background por conta própria. O WinSparkle exige o clique do
 /// usuário pra baixar+instalar — ver doc do [AutoUpdaterSelfUpdater].
 SelfUpdater _buildSelfUpdater(UpdateTarget target) {
+  // Local update channel (dev loop): this exact build was compiled by
+  // `scripts/build-flightdeck.sh --publish-local-update` with
+  // `FLIGHTDECK_UPDATE_CHANNEL=local` baked in — never a real distributed
+  // release. Checked FIRST and independent of debug/release mode: the
+  // actual installed `~/Applications/FlightDeck.app` IS a release build,
+  // so gating this on `!kReleaseMode` (as the old Sparkle-avoidance check
+  // below does) would mean it could never activate for that real target.
+  final localUpdater = LocalDevSelfUpdater();
+  if (localUpdater.isSupported) return localUpdater;
+
   // Em debug/profile (flutter run) o Sparkle é veneno: o bundle id é o mesmo do
   // app instalado, o check acha release novo e o Autoupdate MATA o processo pra
   // instalar/relançar — o run morre com "Lost connection to device" sem erro.

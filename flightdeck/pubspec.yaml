@@ -287,6 +287,10 @@ flutter:
     - assets/hooks/
     - assets/sounds/
     - assets/branding/
+    # Local update channel (dev-loop self-updater): trusted swap helper,
+    # bundled as a signed asset of the app that spawns it — see
+    # LocalDevSelfUpdater and scripts/build-flightdeck.sh --publish-local-update.
+    - assets/dev-update/
     # Plano 58 — pipeline local do preview de markdown (markdown-it +
     # sanitizador + diff de DOM + CSS por variáveis de tema). Sem rede: a
     # webview carrega só estes assets, sob CSP restritiva.

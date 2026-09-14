@@ -157,10 +157,18 @@ class UpdateViewModel extends ChangeNotifier {
   Future<void> _runCheck({bool force = false}) async {
     if (_disposed) return;
 
+    // The local dev-loop channel is a local file read, not a remote appcast
+    // check — it must initialize/subscribe/check at boot (and on every
+    // dev-build-ready ping) regardless of the user's configured
+    // check-frequency setting, which exists to rate-limit NETWORK checks.
+    // Sparkle/WinSparkle/Noop keep the frequency gate exactly as before.
+    final bypassFrequencyGate =
+        isSelfUpdate && _selfUpdater.ignoresCheckFrequency;
+
     final freq =
         _settingsController?.settings.updateCheckFrequency ??
         UpdateCheckFrequency.never;
-    if (!force) {
+    if (!force && !bypassFrequencyGate) {
       if (freq == UpdateCheckFrequency.never) return;
 
       final lastCheck = _settingsController?.settings.lastUpdateCheckTime;

@@ -55,6 +55,9 @@ class AutoUpdaterSelfUpdater with UpdaterListener implements SelfUpdater {
   bool get isSupported => true;
 
   @override
+  bool get ignoresCheckFrequency => false;
+
+  @override
   SelfUpdateState get state => _state;
 
   @override
@@ -68,14 +71,27 @@ class AutoUpdaterSelfUpdater with UpdaterListener implements SelfUpdater {
   @override
   Future<void> initialize() async {
     if (_initialized) return;
-    _initialized = true;
     autoUpdater.addListener(this);
-    // ORDEM IMPORTA no Windows: `setFeedURL` chama `win_sparkle_init()` por
-    // baixo, e o header da WinSparkle é explícito que as funções de config "can
-    // only be called *before* the first call to win_sparkle_init()". Por isso o
-    // intervalo vem primeiro. No macOS a ordem é indiferente.
-    await autoUpdater.setScheduledCheckInterval(checkInterval.inSeconds);
-    await autoUpdater.setFeedURL(feedUrl);
+    try {
+      // ORDEM IMPORTA no Windows: `setFeedURL` chama `win_sparkle_init()` por
+      // baixo, e o header da WinSparkle é explícito que as funções de config "can
+      // only be called *before* the first call to win_sparkle_init()". Por isso o
+      // intervalo vem primeiro. No macOS a ordem é indiferente.
+      await autoUpdater.setScheduledCheckInterval(checkInterval.inSeconds);
+      await autoUpdater.setFeedURL(feedUrl);
+      // Only mark initialized once BOTH configuration calls have actually
+      // succeeded — setting this first (as before) meant a transient/plugin
+      // failure on either await left every later `checkForUpdates()` call
+      // permanently skipping setup with the feed URL never actually set.
+      _initialized = true;
+    } catch (_) {
+      // Best-effort per this class's contract: never crash boot. Swallow
+      // (callers here don't wrap initialize() in their own try/catch) and
+      // leave `_initialized` false so a later call can retry cleanly.
+      // Remove the listener we just added so that retry's `addListener(this)`
+      // does not register a duplicate.
+      autoUpdater.removeListener(this);
+    }
   }
 
   @override

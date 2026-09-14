@@ -1,4 +1,5 @@
 import 'package:flightdeck/app/flightdeck/ui/viewmodels/update_viewmodel.dart';
+import 'package:flightdeck/app/flightdeck/ui/widgets/local_update_restart_prompt.dart';
 import 'package:flightdeck/app/core/ui/themes/themes.dart';
 import 'package:flightdeck/i18n/strings.g.dart';
 import 'package:flightdeck/app/core/ui/widgets/hover_tap.dart';
@@ -34,7 +35,17 @@ class UpdateCard extends StatelessWidget {
         hoverColor: colors.panel3,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: colors.accent.withValues(alpha: 0.5)),
-        onTap: () => context.read<UpdateViewModel>().primaryAction(),
+        onTap: () {
+          final vm = context.read<UpdateViewModel>();
+          // Local dev-update channel always confirms explicitly — never
+          // silently restarts on a stray click. Sparkle/WinSparkle keep
+          // their already-shipped immediate-apply tap behavior unchanged.
+          if (isLocalUpdateChannel) {
+            showLocalUpdateRestartDialog(context, vm);
+          } else {
+            vm.primaryAction();
+          }
+        },
         padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
         child: Row(
           children: [

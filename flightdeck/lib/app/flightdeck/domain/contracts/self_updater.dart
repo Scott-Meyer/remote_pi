@@ -83,6 +83,17 @@ abstract class SelfUpdater {
   /// `true` só onde há motor nativo (macOS/Windows).
   bool get isSupported;
 
+  /// `true` only for the local dev-loop channel (Sparkle/WinSparkle/Noop
+  /// all implement this as `false`; note `implements SelfUpdater` does NOT
+  /// inherit a default body here — every concrete class must say so
+  /// explicitly). The production self-update engines intentionally respect
+  /// the user's configured check frequency (including "never"); the local
+  /// channel must not — an offline-published manifest has to be picked up
+  /// at the next boot and on every `dev-build-ready` ping regardless of
+  /// that unrelated setting, since it isn't a remote appcast check at all,
+  /// just a local file read.
+  bool get ignoresCheckFrequency;
+
   /// Estado corrente (snapshot síncrono pra primeira pintura do card).
   SelfUpdateState get state;
 

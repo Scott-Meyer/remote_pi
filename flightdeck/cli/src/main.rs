@@ -76,6 +76,16 @@ fn main() {
         "orchestrate" => commands::orchestrate(args),
         "note" => commands::note(args),
         "install-skill" => commands::install_skill(args),
+        // Internal/dev-loop only (not in --help): notifies an already-running
+        // FlightDeck that a freshly built .app is ready, so it can offer a
+        // restart-to-apply banner. Best-effort by design — the build script
+        // calls this and ignores failure/non-zero exit if no app is running.
+        "dev-build-ready" => commands::dev_build_ready(args),
+        // Internal/dev-loop only: reports the RUNNING app's own compiled
+        // update-channel/build-id, so the swap helper can confirm a
+        // relaunch is actually serving the build it just swapped in
+        // (not just that a socket file exists).
+        "build-info" => commands::build_info(args),
         // Atalho: `flightdeck <arquivo>` (sem verbo) abre o arquivo — o token
         // desconhecido é tratado como caminho. `flightdeck open <arquivo>` é a
         // forma explícita.

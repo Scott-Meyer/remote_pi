@@ -13,8 +13,13 @@ import 'package:flightdeck/app/flightdeck/ui/viewmodels/update_viewmodel.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _FakeSettingsStore implements SettingsStore {
+  _FakeSettingsStore({this.frequency = UpdateCheckFrequency.daily});
+
+  final UpdateCheckFrequency frequency;
+
   @override
-  Future<AppSettings> load() async => const AppSettings();
+  Future<AppSettings> load() async =>
+      AppSettings(updateCheckFrequency: frequency);
 
   @override
   Future<void> save(AppSettings settings) async {}
@@ -23,8 +28,13 @@ class _FakeSettingsStore implements SettingsStore {
 /// Motor de self-update controlável: os testes empurram fases à mão, como o
 /// Sparkle/WinSparkle fariam.
 class _FakeSelfUpdater implements SelfUpdater {
+  _FakeSelfUpdater({this.ignoresCheckFrequency = false});
+
   @override
   final bool isSupported = true;
+
+  @override
+  final bool ignoresCheckFrequency;
 
   final _controller = StreamController<SelfUpdateState>.broadcast();
   SelfUpdateState _state = const SelfUpdateState.idle();
@@ -254,5 +264,74 @@ void main() {
       expect(vm.cardSubtitle, 'v1.8.4 — restart to install');
       expect(vm.isReadyToInstall, isTrue);
     });
+  });
+
+  group('UpdateViewModel — ignoresCheckFrequency (local dev-update channel)', () {
+    test(
+      'engine with ignoresCheckFrequency=false (Sparkle/WinSparkle/Noop) '
+      'respects frequency=never and does not check',
+      () async {
+        final updater = _FakeSelfUpdater();
+        final vm = UpdateViewModel(
+          _FakeChecker(null),
+          _FakeDismissed(),
+          _FakeOpener(),
+          _kWindowsTarget,
+          updater,
+        );
+        final controller = SettingsController(
+          _FakeSettingsStore(frequency: UpdateCheckFrequency.never),
+        );
+        await controller.load();
+        vm.attachSettings(controller);
+
+        await vm.check();
+
+        expect(
+          updater.checks,
+          isEmpty,
+          reason:
+              'a real appcast engine must respect the user\'s '
+              '"never" setting',
+        );
+
+        vm.dispose();
+        updater.dispose();
+      },
+    );
+
+    test(
+      'engine with ignoresCheckFrequency=true (local dev-update channel) '
+      'checks at boot even when frequency=never',
+      () async {
+        final updater = _FakeSelfUpdater(ignoresCheckFrequency: true);
+        final vm = UpdateViewModel(
+          _FakeChecker(null),
+          _FakeDismissed(),
+          _FakeOpener(),
+          _kWindowsTarget,
+          updater,
+        );
+        final controller = SettingsController(
+          _FakeSettingsStore(frequency: UpdateCheckFrequency.never),
+        );
+        await controller.load();
+        vm.attachSettings(controller);
+
+        await vm.check();
+
+        expect(
+          updater.checks,
+          [true],
+          reason:
+              'the local channel is a local file read, not a remote '
+              'appcast check — the user\'s network-check-frequency setting '
+              'must not gate it',
+        );
+
+        vm.dispose();
+        updater.dispose();
+      },
+    );
   });
 }

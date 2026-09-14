@@ -10,6 +10,9 @@ class NoopSelfUpdater implements SelfUpdater {
   bool get isSupported => false;
 
   @override
+  bool get ignoresCheckFrequency => false;
+
+  @override
   SelfUpdateState get state => const SelfUpdateState.idle();
 
   @override

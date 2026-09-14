@@ -622,6 +622,69 @@ pub fn rename_workspace(args: &[String]) -> ! {
 
 // ---- browse -----------------------------------------------------------------
 
+// ---- dev-build-ready (internal, dev-loop only) --------------------------------
+
+/// Best-effort wake-up ping to an already-running FlightDeck: "a new local build
+/// was just published, re-check ~/.flightdeck/updates/latest.json now instead of
+/// waiting for the periodic timer." No payload is trusted from the wire — the app
+/// always re-reads the manifest itself (durability: a missed/offline ping never
+/// loses the update, it's picked up on the next check regardless). Exits 0
+/// whether or not an app was actually listening; callers (the dev-build script)
+/// treat this as fire-and-forget and ignore failures.
+pub fn dev_build_ready(args: &[String]) -> ! {
+    let mut tab_id: Option<String> = None;
+    let mut i = 0usize;
+    while i < args.len() {
+        if args[i] == "--help" || args[i] == "-h" {
+            println!(
+                "flightdeck dev-build-ready [--json]\n  Internal/dev-loop only: notifies a running FlightDeck that a freshly\n  built .app is staged and ready — the app re-reads its own local update\n  manifest, it does not trust any argument here as the update's identity."
+            );
+            std::process::exit(0);
+        }
+        if let Some((_, value)) = take(args, &mut i, &["--tab-id"]) {
+            tab_id = value;
+        }
+        i += 1;
+    }
+
+    let mut req = json!({"cmd": "dev-build-ready", "args": Value::Object(Map::new())});
+    with_tab_id(&mut req, tab_id.or_else(self_tab_id));
+    let resp = transport::request(req, DEFAULT_TIMEOUT);
+    if !is_ok(&resp) {
+        fail_with(&resp);
+    }
+    println!("ok");
+    std::process::exit(0)
+}
+
+/// Internal/dev-loop only: round-trips through the socket to ask the RUNNING
+/// app for its own compiled `FLIGHTDECK_UPDATE_CHANNEL`/`FLIGHTDECK_LOCAL_BUILD_ID`.
+/// Used by the swap helper as its readiness handshake after a relaunch.
+pub fn build_info(args: &[String]) -> ! {
+    let mut tab_id: Option<String> = None;
+    let mut i = 0usize;
+    while i < args.len() {
+        if args[i] == "--help" || args[i] == "-h" {
+            println!("flightdeck build-info [--json]\n  Internal/dev-loop only: prints the running app's own update channel/build id.");
+            std::process::exit(0);
+        }
+        if let Some((_, value)) = take(args, &mut i, &["--tab-id"]) {
+            tab_id = value;
+        }
+        i += 1;
+    }
+
+    let mut req = json!({"cmd": "build-info", "args": Value::Object(Map::new())});
+    with_tab_id(&mut req, tab_id.or_else(self_tab_id));
+    let resp = transport::request(req, DEFAULT_TIMEOUT);
+    if !is_ok(&resp) {
+        fail_with(&resp);
+    }
+    let data = resp.get("data").cloned().unwrap_or_else(|| json!({}));
+    println!("{}", data);
+    std::process::exit(0)
+}
+
 const BROWSE_HELP: &str = "flightdeck browse <url> [--json]
   Opens the built-in browser tab at <url> (reuses a browser tab already
   open on the same host:port). On platforms without an inline webview

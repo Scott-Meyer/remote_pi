@@ -2,7 +2,10 @@ import 'dart:async' show unawaited;
 import 'dart:convert';
 import 'dart:io' show Directory, File, FileSystemException, Platform;
 
+import 'package:flightdeck/app/flightdeck/data/update/local_dev_self_updater.dart'
+    show kUpdateChannel, kLocalBuildId;
 import 'package:flightdeck/app/flightdeck/domain/contracts/http_request_runner.dart';
+import 'package:flightdeck/app/flightdeck/domain/contracts/self_updater.dart';
 import 'package:flightdeck/app/flightdeck/domain/contracts/task_discovery.dart';
 import 'package:flightdeck/app/flightdeck/domain/contracts/task_runner_gateway.dart';
 import 'package:flightdeck/app/flightdeck/domain/contracts/terminal_status_server.dart';
@@ -48,14 +51,16 @@ class FlightDeckCliHandler {
     this._http,
     this._tasks,
     this._taskRuns,
-    this._taskTerms,
-  );
+    this._taskTerms, {
+    SelfUpdater? selfUpdater,
+  }) : _selfUpdater = selfUpdater;
 
   final FlightDeckViewModel _vm;
   final DbQueryService _db;
   final HttpRequestRunner _http;
   final TaskDiscovery _tasks;
   final TaskRunnerGateway _taskRuns;
+  final SelfUpdater? _selfUpdater;
   final TaskTerminalStore _taskTerms;
 
   /// Atende um comando da CLI interna `flightdeck` (via o mesmo socket do
@@ -401,6 +406,34 @@ class FlightDeckCliHandler {
           }),
           Failure(:final error) => FlightDeckCommandResult.fail(error),
         };
+
+      // Internal/dev-loop only: build script pings this after publishing a
+      // local update so the running app re-checks its manifest immediately
+      // instead of waiting for the next periodic timer.
+      case 'dev-build-ready':
+        // Gated to the local channel: on a real distributed build
+        // `_selfUpdater` is Sparkle/WinSparkle, and calling
+        // checkForUpdates() on it would trigger an unwanted real appcast
+        // network check instead of a no-op.
+        if (kUpdateChannel == 'local') {
+          unawaited(_selfUpdater?.checkForUpdates(inBackground: false));
+        }
+        return const FlightDeckCommandResult.ok({'ok': true});
+
+      // Internal/dev-loop only: reports this running app's own compiled
+      // update channel/build id — the swap helper's readiness handshake.
+      case 'build-info':
+        if (kUpdateChannel != 'local') {
+          return const FlightDeckCommandResult.ok({
+            'channel': '',
+            'buildId': '',
+            'unsupported': true,
+          });
+        }
+        return FlightDeckCommandResult.ok({
+          'channel': kUpdateChannel,
+          'buildId': kLocalBuildId,
+        });
 
       case 'list-workspaces':
         final ws = _vm.projects

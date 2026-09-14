@@ -7,9 +7,14 @@ set -euo pipefail
 #   scripts/build-flightdeck.sh [--install] [--dest <path>]
 #
 # Options:
-#   --install       Installs FlightDeck.app to ~/Applications/FlightDeck.app (or --dest)
-#   --dest <dir>    Custom destination directory for the installed FlightDeck.app
-#   --help, -h      Show this help
+#   --install              Installs FlightDeck.app to ~/Applications/FlightDeck.app (or --dest)
+#   --dest <dir>           Custom destination directory for the installed FlightDeck.app
+#   --publish-local-update Builds with a unique local-update-channel dart-define baked
+#                          in, then stages/publishes it for LocalDevSelfUpdater (see
+#                          flightdeck/lib/app/flightdeck/data/update/local_dev_self_updater.dart)
+#                          instead of leaving the build under build/macos/. Mutually
+#                          exclusive with --install (this is the OTHER distribution path).
+#   --help, -h             Show this help
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -17,12 +22,17 @@ FLIGHTDECK_DIR="$REPO_ROOT/flightdeck"
 CLI_DIR="$FLIGHTDECK_DIR/cli"
 
 DO_INSTALL=false
+DO_PUBLISH_LOCAL_UPDATE=false
 DEST_DIR="$HOME/Applications"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --install)
       DO_INSTALL=true
+      shift
+      ;;
+    --publish-local-update)
+      DO_PUBLISH_LOCAL_UPDATE=true
       shift
       ;;
     --dest)
@@ -35,7 +45,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     -h|--help)
-      echo "Usage: scripts/build-flightdeck.sh [--install] [--dest <path>]"
+      echo "Usage: scripts/build-flightdeck.sh [--install] [--dest <path>] [--publish-local-update]"
       exit 0
       ;;
     *)
@@ -52,8 +62,21 @@ command -v zig >/dev/null 2>&1 || { echo "Error: 'zig' not found in PATH" >&2; e
 command -v codesign >/dev/null 2>&1 || { echo "Error: 'codesign' not found in PATH" >&2; exit 1; }
 command -v plutil >/dev/null 2>&1 || { echo "Error: 'plutil' not found in PATH" >&2; exit 1; }
 
-if [ "$DO_INSTALL" = true ]; then
+if [ "$DO_INSTALL" = true ] && [ "$DO_PUBLISH_LOCAL_UPDATE" = true ]; then
+  echo "Error: --install and --publish-local-update are mutually exclusive" >&2
+  exit 1
+fi
+
+if [ "$DO_INSTALL" = true ] || [ "$DO_PUBLISH_LOCAL_UPDATE" = true ]; then
   command -v ditto >/dev/null 2>&1 || { echo "Error: 'ditto' not found in PATH" >&2; exit 1; }
+fi
+
+if [ "$DO_PUBLISH_LOCAL_UPDATE" = true ]; then
+  command -v uuidgen >/dev/null 2>&1 || { echo "Error: 'uuidgen' not found in PATH" >&2; exit 1; }
+  LOCAL_BUILD_ID="$(uuidgen)"
+  # Additive to any caller-supplied defines; local-update-channel ones win
+  # if there's a collision, since they're appended last.
+  FLIGHTDECK_EXTRA_DART_DEFINES="${FLIGHTDECK_EXTRA_DART_DEFINES:-} --dart-define=FLIGHTDECK_UPDATE_CHANNEL=local --dart-define=FLIGHTDECK_LOCAL_BUILD_ID=$LOCAL_BUILD_ID"
 fi
 
 # Kernel-held mutual exclusion via BSD lockf(1) FILE-DESCRIPTOR mode (the
@@ -196,16 +219,31 @@ validate_app_bundle() {
   codesign --verify --deep --strict "$app_path"
 }
 
-echo "==> Cleaning Rust CLI build artifacts..."
-cargo clean --manifest-path "$CLI_DIR/Cargo.toml"
+# `--publish-local-update` skips both destructive cleans: it's meant for a
+# high-frequency local loop (potentially hundreds of times a day), and
+# Cargo/Xcode's own incrementality already handles their respective
+# inputs correctly without one. The fresh per-invocation dart-define
+# (LOCAL_BUILD_ID) is what forces the Dart/AOT layer to actually rebuild
+# every time regardless — that's the one layer incrementality can't be
+# trusted to invalidate on its own (see the stale-AOT bug this whole
+# clean-by-default policy exists to prevent). Every OTHER invocation
+# (plain build, --install) keeps the full clean, unchanged.
+if [ "$DO_PUBLISH_LOCAL_UPDATE" = true ]; then
+  echo "==> Skipping cargo/flutter clean (--publish-local-update: relying on Cargo/Xcode incrementality + fresh dart-define for Dart/AOT freshness)..."
+else
+  echo "==> Cleaning Rust CLI build artifacts..."
+  cargo clean --manifest-path "$CLI_DIR/Cargo.toml"
+fi
 
 echo "==> Building Rust CLI (flightdeck-cli)..."
 cargo build --release --manifest-path "$CLI_DIR/Cargo.toml"
 cargo test --manifest-path "$CLI_DIR/Cargo.toml" --quiet
 
-echo "==> Cleaning local Flutter build intermediates..."
 cd "$FLIGHTDECK_DIR"
-flutter clean
+if [ "$DO_PUBLISH_LOCAL_UPDATE" = false ]; then
+  echo "==> Cleaning local Flutter build intermediates..."
+  flutter clean
+fi
 
 # Isolated, repo-local, git-ignored pub cache — exported AFTER `flutter
 # clean` (which deletes the whole `.dart_tool/` directory this lives under)
@@ -249,7 +287,22 @@ for _pkg in media_kit_libs_macos_video media_kit_libs_macos_audio; do
 done
 
 echo "==> Building macOS release application..."
-flutter build macos
+# Optional extra --dart-define args, space-separated, for callers that need
+# a compile-time marker baked into an otherwise-identical build (e.g. the
+# local-update-channel publisher). Empty/unset by default — zero behavior
+# change for every normal invocation of this script. Explicit branch, NOT
+# `flutter build macos "${arr[@]:-}"`: on an empty array that expands to
+# ONE stray empty-string argument (a real bash gotcha, confirmed on both
+# bash 3.2 and modern bash — `${arr[@]:-}` supplies a default only when the
+# whole array is unset, not when it has zero elements), which would pass
+# `flutter build macos ''` on every plain invocation of this script.
+if [ -n "${FLIGHTDECK_EXTRA_DART_DEFINES:-}" ]; then
+  # shellcheck disable=SC2206
+  EXTRA_DART_DEFINES=(${FLIGHTDECK_EXTRA_DART_DEFINES})
+  flutter build macos "${EXTRA_DART_DEFINES[@]}"
+else
+  flutter build macos
+fi
 
 BUILT_APP="$FLIGHTDECK_DIR/build/macos/Build/Products/Release/FlightDeck.app"
 if [ ! -d "$BUILT_APP" ]; then
@@ -261,6 +314,45 @@ echo "==> Validating built app identity, resources, and signature..."
 validate_app_bundle "$BUILT_APP"
 
 echo "==> Build successful: $BUILT_APP"
+
+if [ "$DO_PUBLISH_LOCAL_UPDATE" = true ]; then
+  # Everything below runs BEFORE this script exits and releases its lock
+  # (fd 9), deliberately: a second canonical build could otherwise start
+  # the instant this process's lock drops, and mutate/delete the same
+  # $BUILT_APP path while a separate wrapper was still reading from or
+  # cleaning it up after the fact. Staging/manifest/cleanup for the local
+  # update channel all happen in this same held-lock critical section.
+  UPDATES_DIR="$HOME/.flightdeck/updates"
+  STAGED_APP="$UPDATES_DIR/staged/FlightDeck.app"
+  MANIFEST="$UPDATES_DIR/latest.json"
+
+  echo "==> Publishing local update (buildId=$LOCAL_BUILD_ID)..."
+  FRAMEWORK="$BUILT_APP/Contents/Frameworks/App.framework/App"
+  LOCAL_UPDATE_HASH=$(/usr/bin/shasum -a 256 "$FRAMEWORK" | awk '{print $1}')
+
+  mkdir -p "$UPDATES_DIR/staged"
+  STAGE_TMP="$STAGED_APP.staging.$$"
+  rm -rf "$STAGE_TMP"
+  ditto "$BUILT_APP" "$STAGE_TMP"
+  rm -rf "$STAGED_APP"
+  mv "$STAGE_TMP" "$STAGED_APP"
+
+  MANIFEST_TMP="$MANIFEST.tmp.$$"
+  python3 -c "
+import json
+with open('$MANIFEST_TMP', 'w') as f:
+    json.dump({'channel': 'local', 'buildId': '$LOCAL_BUILD_ID', 'appFrameworkSha256': '$LOCAL_UPDATE_HASH'}, f)
+"
+  mv "$MANIFEST_TMP" "$MANIFEST"
+
+  echo "==> Removing build/ output now that it's staged (single canonical app policy)..."
+  rm -rf "$BUILT_APP"
+
+  echo "==> Pinging running app (best-effort)..."
+  "$HOME/.flightdeck/bin/flightdeck" dev-build-ready >/dev/null 2>&1 || true
+
+  echo "==> Published buildId=$LOCAL_BUILD_ID hash=$LOCAL_UPDATE_HASH"
+fi
 
 if [ "$DO_INSTALL" = true ]; then
   TARGET_APP="$DEST_DIR/FlightDeck.app"

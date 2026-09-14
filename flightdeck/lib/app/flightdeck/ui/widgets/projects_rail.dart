@@ -2,6 +2,7 @@ import 'package:flightdeck/app/flightdeck/domain/entities/git_info.dart';
 import 'package:flightdeck/app/flightdeck/domain/entities/project.dart';
 import 'package:flightdeck/app/flightdeck/domain/entities/realm.dart';
 import 'package:flightdeck/app/core/ui/widgets/app_menu.dart';
+import 'package:flightdeck/app/flightdeck/ui/widgets/local_update_restart_prompt.dart';
 import 'package:flightdeck/app/flightdeck/ui/widgets/update_card.dart';
 import 'package:flightdeck/app/flightdeck/ui/widgets/workspace_avatar.dart';
 import 'package:flightdeck/app/core/ui/themes/themes.dart';
@@ -474,7 +475,9 @@ class _ProjectsRailState extends State<ProjectsRail> {
                   ),
           ),
           // Aviso de atualização in-app — acima do nome da máquina (passo 7).
-          const UpdateCard(),
+          // LocalUpdateAutoPrompt is a no-op wrapper outside the local
+          // dev-update channel (see isLocalUpdateChannel).
+          const LocalUpdateAutoPrompt(child: UpdateCard()),
           Container(
             // Mesma altura do footer do file viewer (34) pra alinhar a base.
             height: 34,
