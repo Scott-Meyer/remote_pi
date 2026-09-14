@@ -463,6 +463,23 @@ const CLOSE_WORKSPACE_HELP: &str = "flightdeck close-workspace [<id|path>] [--ta
   --json          output as JSON: {\"id\": \"...\", \"path\": \"...\", \"closed\": true}
   Prints the closed workspace id.";
 
+/// Opaque remote workspace ids (`__remote__<host-id>::/<path>`, see
+/// `Project.remotePrefix` on the Dart side) are not filesystem paths even
+/// though they contain `/` — resolving them through `resolve_path` cwd-
+/// prefixes and corrupts the id before it ever reaches the app, so an exact
+/// id target for a remote workspace could never be addressed positionally.
+/// Only bare local paths/names go through path resolution.
+fn resolve_workspace_target(t: String) -> String {
+    if t.starts_with("__remote__") {
+        return t;
+    }
+    if t.starts_with('~') || t.starts_with('.') || t.contains('/') || t.contains('\\') {
+        resolve_path(&t)
+    } else {
+        t
+    }
+}
+
 pub fn close_workspace(args: &[String]) -> ! {
     let mut target: Option<String> = None;
     let mut as_json = false;
@@ -504,16 +521,7 @@ pub fn close_workspace(args: &[String]) -> ! {
 
     let mut cmd_args = Map::new();
     if let Some(t) = target.filter(|t| !t.is_empty()) {
-        let resolved = if t.starts_with('~')
-            || t.starts_with('.')
-            || t.contains('/')
-            || t.contains('\\')
-        {
-            resolve_path(&t)
-        } else {
-            t
-        };
-        cmd_args.insert("target".into(), json!(resolved));
+        cmd_args.insert("target".into(), json!(resolve_workspace_target(t)));
     }
     let mut req = json!({"cmd": "close-workspace", "args": Value::Object(cmd_args)});
     with_tab_id(&mut req, tab_id.or_else(self_tab_id));
@@ -590,16 +598,7 @@ pub fn rename_workspace(args: &[String]) -> ! {
 
     let mut cmd_args = Map::new();
     if let Some(t) = target_val.filter(|t| !t.is_empty()) {
-        let resolved = if t.starts_with('~')
-            || t.starts_with('.')
-            || t.contains('/')
-            || t.contains('\\')
-        {
-            resolve_path(&t)
-        } else {
-            t
-        };
-        cmd_args.insert("target".into(), json!(resolved));
+        cmd_args.insert("target".into(), json!(resolve_workspace_target(t)));
     }
     cmd_args.insert("name".into(), json!(raw_name));
 
