@@ -76,7 +76,7 @@ describe("loadLocalConfig — file vs REMOTE_PI_DIRECT_CONFIG", () => {
 describe("loadLocalConfig — workspace / worktree removed (plan 38)", () => {
   // The fields were dropped: the mesh identity is `(cwd, nome)`, with `cwd`
   // subsuming folder + worktree disambiguation. A stale key from an old config
-  // (or one the Cockpit still injects) must be silently ignored on read.
+  // (or one the FlightDeck still injects) must be silently ignored on read.
   let cwd: string;
 
   beforeEach(() => {
@@ -150,18 +150,18 @@ describe("saveLocalConfig — unaffected by env (still writes the file)", () => 
   });
 
   test("qualifies unqualified name with workspace env", () => {
-    process.env.COCKPIT_WORKSPACE_NAME = "acme-repo";
+    process.env.FLIGHTDECK_WORKSPACE_NAME = "acme-repo";
     const raw = "worker";
-    const canonical = raw.includes(":") ? raw : `${process.env.COCKPIT_WORKSPACE_NAME}:${raw}`;
+    const canonical = raw.includes(":") ? raw : `${process.env.FLIGHTDECK_WORKSPACE_NAME}:${raw}`;
     expect(canonical).toBe("acme-repo:worker");
-    delete process.env.COCKPIT_WORKSPACE_NAME;
+    delete process.env.FLIGHTDECK_WORKSPACE_NAME;
   });
 
   test("preserves already qualified name", () => {
-    process.env.COCKPIT_WORKSPACE_NAME = "acme-repo";
+    process.env.FLIGHTDECK_WORKSPACE_NAME = "acme-repo";
     const raw = "other-repo:worker";
-    const canonical = raw.includes(":") ? raw : `${process.env.COCKPIT_WORKSPACE_NAME}:${raw}`;
+    const canonical = raw.includes(":") ? raw : `${process.env.FLIGHTDECK_WORKSPACE_NAME}:${raw}`;
     expect(canonical).toBe("other-repo:worker");
-    delete process.env.COCKPIT_WORKSPACE_NAME;
+    delete process.env.FLIGHTDECK_WORKSPACE_NAME;
   });
 });

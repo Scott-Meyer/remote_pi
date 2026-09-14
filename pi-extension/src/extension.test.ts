@@ -392,7 +392,7 @@ describe("extension default export", () => {
   });
 
   // README documents `/remote-pi rename <new>` but the verb had been dropped
-  // from the TUI dispatcher (only the Cockpit `rename:` control path worked).
+  // from the TUI dispatcher (only the FlightDeck `rename:` control path worked).
   // Re-adding it aligns the implementation with the documented surface.
   test("/remote-pi rename is registered and dispatches to _renameAgent", async () => {
     const rename = captureHandler("remote-pi rename");
@@ -3803,7 +3803,7 @@ describe("bye on teardown", () => {
   });
 });
 
-// ── session_shutdown teardown (cockpit double-conn fix) ────────────────────────
+// ── session_shutdown teardown (flightdeck double-conn fix) ────────────────────────
 
 describe("session_shutdown teardown", () => {
   beforeEach(async () => {
@@ -3826,7 +3826,7 @@ describe("session_shutdown teardown", () => {
   // Regression: the Pi SDK re-evaluates this module FRESH on every session
   // replacement (jiti `moduleCache: false`), and in daemon mode the fresh
   // instance re-runs `_cmdRoot` on load. Without releasing the OUTGOING
-  // instance's mesh + relay first, the Cockpit's boot-time `switch_session`
+  // instance's mesh + relay first, the FlightDeck's boot-time `switch_session`
   // leaves two live connections (the "double mesh connection" bug). The SDK
   // emits + awaits `session_shutdown` on the outgoing runner before the
   // replacement loads, so the handler MUST exist and tear everything down.
@@ -3941,7 +3941,7 @@ describe("session_shutdown teardown", () => {
     expect(relayInstances).toHaveLength(0);
   });
 
-  // The precise Cockpit race: switch_session → session_shutdown lands WHILE
+  // The precise FlightDeck race: switch_session → session_shutdown lands WHILE
   // `_cmdStart` is parked in `relay.connect()` (network RTT). At that moment
   // `_state` is still "idle" (cmdStart only sets "started" after connect), so
   // the shutdown handler's `_goIdle()` is skipped and cannot see the in-flight
@@ -4429,7 +4429,7 @@ describe("session_shutdown teardown", () => {
   });
 });
 
-// ── remote-pi:name-assigned event (Cockpit consumes the effective name) ────────
+// ── remote-pi:name-assigned event (FlightDeck consumes the effective name) ────────
 
 describe("remote-pi:name-assigned event", () => {
   beforeEach(async () => {
@@ -4449,7 +4449,7 @@ describe("remote-pi:name-assigned event", () => {
     await stop("", makeMockCtx());
   });
 
-  // Contract for the Cockpit: on join the extension emits a pure-data
+  // Contract for the FlightDeck: on join the extension emits a pure-data
   // (display:false) custom message carrying the requested + effective mesh
   // name, so the client can rename the agent when the broker appended a `#N`.
   test("join emits remote-pi:name-assigned with requested + assigned + changed", async () => {
@@ -4502,7 +4502,7 @@ describe("local config owns mesh name", () => {
   });
 });
 
-// ── relay control channel + relay-state event (Cockpit on/off button) ──────────
+// ── relay control channel + relay-state event (FlightDeck on/off button) ──────────
 
 describe("relay control channel + relay-state event", () => {
   function makeSpyPi(sendMessage: ReturnType<typeof vi.fn>) {
@@ -4536,7 +4536,7 @@ describe("relay control channel + relay-state event", () => {
   });
 
   // Transparency: a CTRL_PREFIX-tagged input is swallowed by the `input` hook
-  // so it never reaches the LLM or the transcript — the path the Cockpit button
+  // so it never reaches the LLM or the transcript — the path the FlightDeck button
   // uses to toggle the relay without a visible turn.
   test("input hook swallows a CTRL_PREFIX control message (action:handled)", () => {
     const input = captureEventHandler("input");
@@ -4603,7 +4603,7 @@ describe("relay control channel + relay-state event", () => {
     // The mesh node + relay survive (no process restart); relay back up.
     expect(_hasMeshNodeForTest()).toBe(true);
     expect(_getState()).toBe("started");
-    // Cockpit is told the new effective name via remote-pi:name-assigned.
+    // FlightDeck is told the new effective name via remote-pi:name-assigned.
     const ev = sendMessage.mock.calls
       .map((c) => c[0] as { customType?: string; display?: boolean; details?: Record<string, unknown> })
       .reverse()

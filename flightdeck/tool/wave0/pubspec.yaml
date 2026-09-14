@@ -1,0 +1,17 @@
+name: wave0_tools
+description: Scripts de aceite da Wave 0 do plano 58 (e2e + benchmark). Não é código de produção.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.9.0
+
+dependencies:
+  flightdeck_core:
+    path: ../../packages/flightdeck_core
+  flightdeck_engine:
+    path: ../../packages/flightdeck_engine
+  flightdeck_protocol:
+    path: ../../packages/flightdeck_protocol
+  flightdeck_remote:
+    path: ../../packages/flightdeck_remote

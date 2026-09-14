@@ -12,9 +12,9 @@ services:
       - UPLOAD_TOKEN=${UPLOAD_TOKEN:-}
     volumes:
       # Montados rw: o CI publica latest.json/appcast via PUT /upload.
-      # Host: /Users/flutterando/cockpit/data/latest.json
-      # URL:  https://rp-s3.jacobmoura.work/downloads/cockpit/latest.json
-      - /Users/flutterando/cockpit/data:/data/cockpit
+      # Host: /Users/flutterando/flightdeck/data/latest.json
+      # URL:  https://rp-s3.jacobmoura.work/downloads/flightdeck/latest.json
+      - /Users/flutterando/flightdeck/data:/data/flightdeck
       # Manifest do app mobile (APK Android, plano 44).
       # URL: https://rp-s3.jacobmoura.work/downloads/app/latest.json
       - /Users/flutterando/app/data:/data/app

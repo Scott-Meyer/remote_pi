@@ -150,9 +150,9 @@ const STORES: Store[] = [
   {
     glyph: <IconDownload />,
     top: "Desktop app",
-    name: "Cockpit",
+    name: "FlightDeck",
     sub: "macOS · Windows · Linux",
-    href: "/cockpit",
+    href: "/flightdeck",
   },
 ];
 
@@ -166,7 +166,7 @@ export function GetApp() {
           <p>
             The authenticator and the remote control. Get it on the App Store or
             Google Play, grab the Android APK direct, or download the desktop
-            Cockpit.
+            FlightDeck.
           </p>
         </div>
         <div className="app-grid">

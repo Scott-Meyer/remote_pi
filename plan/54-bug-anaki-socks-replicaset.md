@@ -39,7 +39,7 @@ Ou seja: proxy ok, `replicaSet` ok, multi-seed ok, **SRV ok**.
 
 ## Evidência 2 — pelo runner de produção (todo call em `Isolate.run`), SRV falha 3/3
 
-`NoSqlRunnerImpl.mongo` (Cockpit) envolve cada chamada em `Isolate.run`, porque
+`NoSqlRunnerImpl.mongo` (FlightDeck) envolve cada chamada em `Isolate.run`, porque
 a FFI do anaki é bloqueante e não pode rodar na thread de UI:
 
 ```
@@ -93,7 +93,7 @@ await Isolate.run(() => ping('mongodb://user:pass@shard-00-00.xxxxx.mongodb.net:
 Não precisa de proxy para reproduzir — o proxy estava presente aqui só porque o
 Atlas do cliente só é alcançável pelo bastion.
 
-## O que isso significa pro Cockpit
+## O que isso significa pro FlightDeck
 
 O plano 54 (DB over SSH tunnel) está funcional e provado com dado real: SSH +
 SOCKS de pé, TLS até o shard, query respondendo `ok:1` em 1–2s pelo túnel. O que
@@ -111,4 +111,4 @@ failover. A ressalva é que o hostname do shard pode mudar se a Atlas remanejar 
 cluster.
 
 > Credenciais reais não estão neste arquivo de propósito — elas vivem no
-> `.cockpit/databases.json` do workspace.
+> `.flightdeck/databases.json` do workspace.

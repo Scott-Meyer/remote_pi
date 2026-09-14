@@ -1,0 +1,156 @@
+flightdeck — FlightDeck's internal CLI (visible only inside the app's terminals)
+
+`deck` is a shorter name for the same command: `deck list-tabs` == `flightdeck
+list-tabs`. (If you already have your own `deck` alias, yours wins.)
+
+A **tab** is a terminal/agent session (what this CLI addresses). A **pane** is
+the split leaf that groups tabs — not addressed here. `list-panes`/`read-pane`
+are legacy aliases of `list-tabs`/`read-tab`.
+
+USAGE:
+  flightdeck send      [--tab-id <id>] [--enter] <text>   type text (--enter submits)
+  flightdeck send-key  [--tab-id <id>] <Key>...   press named key(s)
+  flightdeck open      [--tab-id <id>] <file>     open the file in the app's viewer
+  flightdeck <file>                               shortcut for `open` (e.g. flightdeck .zprofile)
+  flightdeck read-tab  [<label|tab-id>]           read a tab's rendered output (alias: read-pane)
+  flightdeck read-task <task-id>                  read a task's output (even w/o tab)
+  flightdeck list-tabs       [--json]             list active tabs (alias: list-panes)
+  flightdeck list-workspaces [--json]             list workspaces (projects)
+  flightdeck list-tasks      [--json]             list this workspace's tasks (Task Run)
+  flightdeck new-tab [--cwd <dir>] [--title <name>] [--split h|v]
+                                               open a new terminal tab (prints its id)
+  flightdeck close-tab [<label|tab-id>]           close a tab (default: the current
+                                               one) — prints the closed tab id
+  flightdeck new-workspace <path> [--host <host>] [--name <name>] [--json]
+                                               create/open a workspace (local or remote)
+  flightdeck new-remote-workspace --host <h> --path <p> [--name <n>] [--json]
+                                               create/open a remote workspace
+  flightdeck close-workspace [<id|path>] [--json] close a top-level workspace
+  flightdeck rename-workspace <id|path> <name> [--json]
+                                               rename a workspace in the sidebar
+  flightdeck db <list|schema|query|run|execute>   SQL databases (see `flightdeck db --help`)
+  flightdeck redis [browse] --db <conn> ...       Redis command / open key table
+  flightdeck mongo [browse] --db <conn> [--database <name>] ...
+                                               MongoDB runCommand / open browser
+  flightdeck http <list|run> <file.http>          run HTTP requests from a .http
+                                               file (see `flightdeck http --help`)
+  flightdeck browse <url> [--json]                open the built-in browser tab at
+                                               <url> (system browser on Linux)
+  flightdeck orchestrate <file.ckp> [--json]      apply a .ckp pane layout (open
+                                               terminals/splits + run commands)
+  flightdeck note <add|list> <dir.notebook> ...   write/list notes in a notebook
+                                               folder (see `flightdeck note --help`)
+  flightdeck install-skill   [--force]            install the Claude Code skill
+  flightdeck --help | --version
+
+READ (read-tab / read-task):
+  --lines N     how many lines (default 100, server cap 2000)
+  --offset N    skip N lines from the anchor (pagination)
+  --from-start  anchor at the start of the buffer (default: tail/end)
+  Output is always chronological (top→bottom); flags only pick the window.
+  read-tab without a target reads the CURRENT tab; a target may be a stable
+  tab label or a tab-id.
+
+TASKS (list-tasks / read-task):
+  Task ids are stable per workspace: npm:<script> (package.json), flutter:run /
+  flutter:test, json:<label> (.flightdeck/tasks.json). Discover them with
+  `flightdeck list-tasks` — `[output]` marks tasks whose output `read-task` can
+  read (ran this boot); ● marks tasks running right now. Task-output tabs in
+  `list-tabs --json` also carry the task id as `taskId`.
+
+DATABASES (db):
+  Connections live per workspace in .flightdeck/databases.json (+ auto-detected
+  SQLite files). Output is one JSON line — made for agents. Examples:
+    flightdeck db list
+    flightdeck db schema --db dev-local orders
+    flightdeck db query --db dev-local --sql "SELECT * FROM orders LIMIT 5"
+    flightdeck db run reports/daily.dbq
+  Full reference: `flightdeck db --help`.
+
+HTTP (http):
+  Runs requests written in a .http file (REST Client / JetBrains syntax). The
+  app renders the same file as a request tab. Output is one JSON line:
+    flightdeck http list api/users.http
+    flightdeck http run  api/users.http --request "Create user"
+  Full reference: `flightdeck http --help`.
+
+NOTEBOOKS (note):
+  A folder named *.notebook is a notebook: one .md per note, frontmatter with
+  title/tags. The app shows it as a single item and renders it as a notes tab.
+    flightdeck note add notes.notebook --title "Túnel SSH" --tag relay --body -
+    flightdeck note list notes.notebook
+  Full reference: `flightdeck note --help`.
+
+IDS:
+  Workspace ids are opaque UUIDs — use `workspacePath` (list-tabs) / `path`
+  (list-workspaces) when you need the folder on disk.
+
+FLAGS:
+  --enter         (send only) press Enter right after the text, as a separate
+                  keystroke. Same as `send …` followed by `send-key … Enter`,
+                  in one call.
+  --focused       target the tab you are LOOKING AT, whatever it is. Resolved by
+                  the app, so no id to copy. Works from outside a FlightDeck
+                  terminal too (dictation tools, scripts): with no env inherited
+                  the CLI finds the app through ~/.flightdeck/status.sock.
+
+TARGET:
+  --tab-id <id>   target tab (--focused wins over it). Default = $FLIGHTDECK_TAB_ID
+                  (the current tab;
+                  legacy fallback $FLIGHTDECK_PANE_ID). Ids (t0, t1…) reset on every
+                  app boot → find them with `flightdeck list-tabs` before targeting
+                  another tab (cross-tab).
+
+KEYS (send-key):
+  Enter Tab Escape Space BSpace Up Down Left Right Home End
+  PageUp PageDown Delete   |   C-<letter> (e.g. C-c = Ctrl+C)
+
+NEW-TAB:
+  --cwd <dir>     working directory (default: current directory)
+  --title <name>  stable tab label (send/read-tab can target it by name)
+  --split h|v     h (or right) = side by side; v (or down) = stacked.
+                  Omit to open as a new tab in the same pane.
+  Anchored at the emitting tab's pane/workspace. Prints the new tab id.
+
+CLOSE-TAB:
+  flightdeck close-tab [<label|tab-id>]
+  Without a target it closes the CURRENT tab — the shell you are typing in
+  ends with it. Closing the last tab of a split removes the split; closing the
+  last tab of a workspace leaves an empty tab (same as the tab's "x" in the UI).
+
+WORKSPACES (new-workspace / close-workspace / rename-workspace):
+  flightdeck new-workspace <path> [--host <ssh-target>] [--name <title>] [--json]
+  flightdeck new-remote-workspace --host <ssh-target> --path <remote-path> [--name <title>] [--json]
+  Alias: `flightdeck open-workspace`. Adds a top-level workspace in FlightDeck's
+  sidebar (local or remote), selects it, and ensures an initial terminal tab is
+  opened. For remote workspaces, --host specifies the SSH host or ~/.ssh/config
+  alias (automatically registered if not already present).
+  Idempotent: if already open, selects it and returns its info. Prints the
+  workspace id (or JSON object with --json).
+
+  flightdeck close-workspace [<id|path>] [--json]
+  Closes a top-level workspace (ends its tabs; files on disk are kept). Target
+  may be a UUID, directory path, or unique name (default: current workspace).
+  Prints the closed workspace id.
+
+  flightdeck rename-workspace [<id|path>] <new-name> [--json]
+  Updates the display title of a workspace in the sidebar. Target may be a UUID,
+  directory path, or unique name (default: current workspace).
+
+EXAMPLES:
+  flightdeck send "echo hi" && flightdeck send-key Enter
+  id=$(flightdeck new-tab --cwd ~/proj --title Worker --split h)
+  flightdeck send --tab-id "$id" --enter "npm test"   # text + Enter in one call
+  flightdeck close-tab "$id"                      # close it when done (or: Worker)
+  ws=$(flightdeck new-workspace ~/proj/my-service --name "My Service")
+  flightdeck rename-workspace "$ws" "Renamed Service"
+  flightdeck close-workspace "$ws"
+  rws=$(flightdeck new-remote-workspace --host workspace-vm --path /home/ubuntu/wt --name "Task 1")
+  flightdeck send-key C-c
+  flightdeck send --tab-id t3 --enter "ls"
+  flightdeck .zprofile          # opens the file in the viewer (relative to tab cwd)
+  flightdeck open ~/.gitconfig
+  flightdeck read-tab Extension --lines 50        # last 50 lines of tab "Extension"
+  flightdeck read-tab t4 --lines 200 --from-start
+  flightdeck list-tasks                           # discover task ids (npm:dev, ...)
+  flightdeck read-task npm:dev --lines 80         # tail of task "npm:dev" output

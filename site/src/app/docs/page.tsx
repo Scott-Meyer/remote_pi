@@ -823,7 +823,7 @@ export default function DocsPage() {
           <InlineCode>.pi/remote-pi/</InlineCode> of its own. You can set the
           same variable yourself to override{" "}
           <InlineCode>&lt;cwd&gt;/.pi/remote-pi/config.json</InlineCode> for a
-          single run — an escape hatch for CI, ops, and the Cockpit desktop
+          single run — an escape hatch for CI, ops, and the FlightDeck desktop
           client:
         </p>
         <CodeBlock
@@ -931,8 +931,8 @@ export default function DocsPage() {
             </Link>
           </li>
           <li>
-            Cockpit reference:{" "}
-            <Link href="/cockpit/docs" className="text-accent underline">
+            FlightDeck reference:{" "}
+            <Link href="/flightdeck/docs" className="text-accent underline">
               CLI, layouts, tasks, themes
             </Link>
           </li>

@@ -8,7 +8,7 @@
 
 ## Contexto
 
-Hoje o Cockpit **conecta a partir do** Windows, mas uma máquina Windows não pode
+Hoje o FlightDeck **conecta a partir do** Windows, mas uma máquina Windows não pode
 **ser** host: `remote_host_connector.dart:485` (desktop) e `:332` (mobile) barram
 explicitamente, e a mensagem de erro diz "o servidor remoto precisa de um sistema
 tipo UNIX (macOS ou Linux)".
@@ -16,11 +16,11 @@ tipo UNIX (macOS ou Linux)".
 A investigação de 2026-08-26 mostrou que **a barreira é menor do que a mensagem
 sugere**. O achado central:
 
-> O `cockpit-server` **já é nativo de Windows**. `LocalEndpoint`
-> (`packages/cockpit_protocol/lib/src/local_endpoint.dart`) já abstrai POSIX vs
+> O `flightdeck-server` **já é nativo de Windows**. `LocalEndpoint`
+> (`packages/flightdeck_protocol/lib/src/local_endpoint.dart`) já abstrai POSIX vs
 > Windows: no POSIX escuta num socket UNIX; no Windows escuta em **TCP loopback**
 > numa porta efêmera e grava, no caminho pedido, um **arquivo de rendezvous** JSON
-> com `{v, port, token}`. O PTY já é ConPTY via `cockpit_pty.dll`. O binário
+> com `{v, port, token}`. O PTY já é ConPTY via `flightdeck_pty.dll`. O binário
 > compila e roda no Windows — foi verificado nesta máquina, servindo o sidecar
 > local da GUI em `127.0.0.1`.
 
@@ -38,11 +38,11 @@ extension byte` ao decodificar a resposta do `cmd.exe` em CP-850. Corrigido em
 
 | Peça | Estado | Onde |
 |---|---|---|
-| Servidor headless em Windows | ✅ compila e roda | `packages/cockpit_server/` |
+| Servidor headless em Windows | ✅ compila e roda | `packages/flightdeck_server/` |
 | Transporte local TCP + token | ✅ implementado | `LocalEndpoint` (`usesTcp`, rendezvous JSON) |
-| PTY nativo (ConPTY) | ✅ empacotado | `plugins/cockpit_pty/` → `cockpit_pty.dll` |
-| CLI interna (`cockpit`/`ck`) em Windows | ✅ compila | `cli/` (Rust) |
-| Alias `ck` sem symlink no Windows | ✅ decidido e implementado | `hook_installer_base.dart` (`ensureShortAlias` copia o `.exe`) |
+| PTY nativo (ConPTY) | ✅ empacotado | `plugins/flightdeck_pty/` → `flightdeck_pty.dll` |
+| CLI interna (`flightdeck`/`deck`) em Windows | ✅ compila | `cli/` (Rust) |
+| Alias `deck` sem symlink no Windows | ✅ decidido e implementado | `hook_installer_base.dart` (`ensureShortAlias` copia o `.exe`) |
 | Sobrescrita de binário no Windows | ✅ corrigido 2026-08-26 | `hook_installer_base.dart` (`_copyOver`) |
 | Cliente Windows → host POSIX | ✅ funciona | `SshTunnel` já usa `-L 127.0.0.1:porta:` na ponta local |
 
@@ -53,17 +53,17 @@ Todos no cliente. Numerados para os passos referenciarem.
 | # | Bloqueio | Onde | Hoje | Precisa |
 |---|---|---|---|---|
 | **B1** | Detecção de OS do host | `remote_host_connector.dart:475` | `uname -sm`; falha ⇒ `_looksLikeWindowsHost()` ⇒ erro | Reconhecer Windows como caminho válido e descobrir arch |
-| **B2** | Forward do túnel | `ssh_tunnel.dart:129` | `-L <local>:$HOME/.cockpit/cockpit-server.sock` (streamlocal) | `-L 127.0.0.1:lport:127.0.0.1:rport` — a ponta remota é TCP |
+| **B2** | Forward do túnel | `ssh_tunnel.dart:129` | `-L <local>:$HOME/.flightdeck/flightdeck-server.sock` (streamlocal) | `-L 127.0.0.1:lport:127.0.0.1:rport` — a ponta remota é TCP |
 | **B3** | Descoberta de porta/token remotos | — | não existe | Ler o rendezvous JSON do host antes de abrir o forward |
 | **B4** | Token no handshake | `remote_host_connector.dart:371-374` | conecta **sem** token ("não há rendezvous nem token a resolver aqui") | Servidor Windows **recusa** `Hello` sem `tok` |
 | **B5** | Shell do host | todo o bootstrap | comandos POSIX crus | `cmd.exe` é o shell default do OpenSSH no Windows |
 | **B6** | Upload do bundle | `:559` (`push`) | `cat > arquivo` (stdin binário) | stdin binário via cmd/PowerShell corrompe |
-| **B7** | Artefato cross-OS | `:531-536` | recusa: cliente só embarca servidor da própria plataforma | macOS/Linux não têm um `cockpit-server.exe` para empurrar |
+| **B7** | Artefato cross-OS | `:531-536` | recusa: cliente só embarca servidor da própria plataforma | macOS/Linux não têm um `flightdeck-server.exe` para empurrar |
 | **B8** | Start do processo | `:648` | `nohup … >log 2>&1 &` | precisa `Start-Process` destacado |
 | **B9** | Liveness | `:675` | `test -S <sock>` | no Windows o rendezvous é **arquivo comum**, não socket |
 | **B10** | Comandos auxiliares | vários | `mkdir -p`, `chmod +x`, `pkill -f`, `ln -sf`, `sha256sum`, `tail -c`, `test -x` | equivalentes PowerShell |
 | **B11** | Caminhos | `_remoteServerBin`, `_remoteSocketPath` | `$HOME/...`, sem `.exe` | `$env:USERPROFILE`, sufixo `.exe`, `$HOME` com espaço |
-| **B12** | Lib do PTY | `:551` | `libcockpit_pty.dylib` / `.so` | `cockpit_pty.dll` |
+| **B12** | Lib do PTY | `:551` | `libflightdeck_pty.dylib` / `.so` | `flightdeck_pty.dll` |
 | **B13** | Mobile | `remote_host_connector.dart:329-337` | `printf %s "$HOME"` + `conn.forwardUnix()` | `forwardLocal(host, port)` do `dartssh2` + token |
 | **B14** | Setup de auth no host | — | não documentado | Usuário **administrador** no Windows lê chaves de `%ProgramData%\ssh\administrators_authorized_keys`, **não** de `~/.ssh/authorized_keys`, e o arquivo precisa de ACL só `SYSTEM` + `Administrators` |
 
@@ -97,8 +97,8 @@ não temos como detectar direito.
 
 ### D2 — Distribuição do servidor: reusar o bundle do app instalado ✅ FECHADA (2026-08-26)
 
-> **Fechada na opção (c)**: host Windows precisa ter o Cockpit desktop instalado,
-> e o bootstrap reusa o `cockpit-server-bundle` dele por **cópia local**, sem
+> **Fechada na opção (c)**: host Windows precisa ter o FlightDeck desktop instalado,
+> e o bootstrap reusa o `flightdeck-server-bundle` dele por **cópia local**, sem
 > transferir binário pelo SSH. As opções (a) e (b) ficam registradas abaixo — (b)
 > é a evolução natural quando o cenário "host Windows sem GUI" aparecer.
 
@@ -108,15 +108,15 @@ não temos como detectar direito.
 |---|---|---|
 | **(a)** Cliente embarca servidor de todas as plataformas | +~40 MB em todo cliente, inclusive mobile | ✗ |
 | **(b)** Baixar o bundle certo do GitHub Release na hora | precisa de rede no cliente, versionamento, verificação de hash | evolução |
-| **(c)** Exigir Cockpit instalado no host Windows e **reusar o bundle dele** | zero upload, zero download | ✓ MVP |
+| **(c)** Exigir FlightDeck instalado no host Windows e **reusar o bundle dele** | zero upload, zero download | ✓ MVP |
 
 Recomendação: **(c)** para o MVP. O caminho de instalação do Windows já entrega
-`%LOCALAPPDATA%\Programs\Remote Pi Cockpit\cockpit-server-bundle\{bin,lib}` —
+`%LOCALAPPDATA%\Programs\Remote Pi FlightDeck\flightdeck-server-bundle\{bin,lib}` —
 exatamente o layout que o bootstrap espera. O host copia **localmente** dali para
-`~/.cockpit/server/`, sem transferir nada pelo SSH. Isso também neutraliza **B6**
+`~/.flightdeck/server/`, sem transferir nada pelo SSH. Isso também neutraliza **B6**
 (upload binário) no caso comum.
 
-Consequência de produto: *"host Windows precisa ter o Cockpit desktop
+Consequência de produto: *"host Windows precisa ter o FlightDeck desktop
 instalado"*. Restrição aceitável — o cenário VPS headless do plano 58 é Linux, e
 quem expõe um Windows como host é alguém que usa a máquina.
 
@@ -162,14 +162,14 @@ Windows não deve chegar na frente.
 ## Spike 2026-08-26 — o que foi medido, não suposto
 
 Rodado contra esta máquina Windows 11 (26300) via `ssh jacob@127.0.0.1`, com o
-`cockpit-server.exe` do bundle instalado. Resultados:
+`flightdeck-server.exe` do bundle instalado. Resultados:
 
 | # | Hipótese | Resultado |
 |---|---|---|
 | 1 | `powershell -NoProfile -EncodedCommand` funciona com `cmd.exe` como shell default (**D1**) | ✅ Probe devolveu `{"os":"windows","arch":"x64","home":"C:\\Users\\jacob"}` |
 | 2 | Preâmbulo de `OutputEncoding` mata o CP-850 na origem (**D1**) | ✅ `"configuração não é ção"` atravessou o SSH intacto |
-| 3 | Bundle do app instalado é achável e copiável localmente (**D2**) | ✅ `cockpit-server-bundle\bin\cockpit-server.exe` presente; cópia pra `~/.cockpit/` sem transferir bytes pelo SSH |
-| 4 | Servidor sobe no Windows e escreve o rendezvous (**B3**) | ✅ `{"v":1,"port":51511,"token":"…"}` + log `cockpit-server listening on …` |
+| 3 | Bundle do app instalado é achável e copiável localmente (**D2**) | ✅ `flightdeck-server-bundle\bin\flightdeck-server.exe` presente; cópia pra `~/.flightdeck/` sem transferir bytes pelo SSH |
+| 4 | Servidor sobe no Windows e escreve o rendezvous (**B3**) | ✅ `{"v":1,"port":51511,"token":"…"}` + log `flightdeck-server listening on …` |
 | 5 | **`Start-Process` sobrevive ao fim da sessão SSH (B8)** | ❌ **REFUTADA** — processo morre junto com a sessão |
 | 6 | A sessão do `sshd` roda dentro de um Job Object | ✅ `IsProcessInJob` ⇒ `true` — é a causa de (5) |
 | 7 | WMI `Win32_Process.Create` escapa do job (**D4**) | ✅ sobreviveu; ressalva: nasce na **sessão 0** |
@@ -180,7 +180,7 @@ exatamente a que o plano apontava como mais frágil. O custo de tê-la testado
 antes: o desenho da Wave C mudou por causa de um teste de 10 minutos, em vez de
 mudar no meio da implementação.
 
-Artefatos do spike foram removidos (`~/.cockpit/spike*`, processo encerrado).
+Artefatos do spike foram removidos (`~/.flightdeck/spike*`, processo encerrado).
 
 ## Estrutura esperada
 
@@ -196,7 +196,7 @@ pode nascer só-POSIX sem quebrar a compilação da outra implementação — qu
 precisamente como o bootstrap chegou onde chegou.
 
 ```
-lib/app/cockpit/data/remote/
+lib/app/flightdeck/data/remote/
 ├── host_shell/
 │   ├── host_shell.dart          # contrato: comandos que o bootstrap precisa
 │   ├── posix_host_shell.dart    # o que existe hoje, extraído
@@ -230,7 +230,7 @@ abstract class HostShell {
 > os passos de documentação e UI.
 
 **Passo 0.1 — Documentar o setup de auth do host Windows (B14)**
-Doc em `cockpit/docs/` cobrindo: instalar/ligar o `sshd`, e o comportamento do
+Doc em `flightdeck/docs/` cobrindo: instalar/ligar o `sshd`, e o comportamento do
 `Match Group administrators` — usuário administrador lê chaves de
 `%ProgramData%\ssh\administrators_authorized_keys`, e a ACL tem que ser só
 `SYSTEM` + `Administrators` (senão o OpenSSH ignora o arquivo em silêncio).
@@ -241,7 +241,7 @@ Doc em `cockpit/docs/` cobrindo: instalar/ligar o `sshd`, e o comportamento do
 **Passo 0.2 — Preflight na UI**
 Ao adicionar um host, checar SSH alcançável + shell utilizável, e reportar por
 `RemoteHostErrorKind` tipado (nada de `Result<T, String>` com frase pronta — ver
-`cockpit/CLAUDE.md`).
+`flightdeck/CLAUDE.md`).
 
 > Critério de aceite: host com sshd desligado, chave em arquivo errado e ACL
 > frouxa produzem **três** mensagens distintas e acionáveis.
@@ -299,8 +299,8 @@ plataformas e é sinal mais forte que o inode.
 
 **Passo C.1 — Instalação por cópia local (D2 fechada, B7, B6)**
 Detectar o bundle do app instalado no host — `%LOCALAPPDATA%\Programs\Remote Pi
-Cockpit\cockpit-server-bundle\{bin,lib}` — e copiar para `~/.cockpit/server/`.
-Sem Cockpit no host → erro tipado dizendo exatamente isso (novo
+FlightDeck\flightdeck-server-bundle\{bin,lib}` — e copiar para `~/.flightdeck/server/`.
+Sem FlightDeck no host → erro tipado dizendo exatamente isso (novo
 `RemoteHostErrorKind`, com as 3 traduções).
 
 Encaixa no caminho `alreadyInstalled` que o conector já tem (`:502`), criado
@@ -312,7 +312,7 @@ sobretudo *reconhecer* o bundle, não escrever um instalador novo.
 
 **Passo C.2 — Start fora do Job Object (D4, B8, B12)**
 `Invoke-CimMethod Win32_Process Create` — **não** `Start-Process` (spike refutou;
-ver D4). `COCKPIT_PTY_DYLIB` apontando pro `cockpit_pty.dll`; como o WMI não
+ver D4). `FLIGHTDECK_PTY_DYLIB` apontando pro `flightdeck_pty.dll`; como o WMI não
 redireciona stdout/stderr, envolver em `cmd /c "… > log 2>&1"` para preservar o
 `server-boot.log` de que o passo B.4 depende.
 
@@ -381,7 +381,7 @@ de arquivos, git e um DB.
 | ~~Sessão 0 (WMI) quebrar ConPTY~~ | **Refutado em 2026-08-26** pelo `tool/win_host_e2e.dart`: PTY abre, produz saída e aceita input com o servidor na sessão 0. O fallback de tarefa agendada não foi preciso |
 | Acento re-codificado na saída do PTY | **Achado novo** — ver seção abaixo. Fora do escopo deste plano |
 | WMI não redireciona stdout/stderr ⇒ `server-boot.log` vazio e liveness sem evidência | `cmd /c "… > log 2>&1"` no CommandLine (passo C.2) |
-| Antivírus/SmartScreen barra o `cockpit-server.exe` copiado | Documentar; o binário não é assinado (decisão de distribuição do plano 00) |
+| Antivírus/SmartScreen barra o `flightdeck-server.exe` copiado | Documentar; o binário não é assinado (decisão de distribuição do plano 00) |
 | `--exit-on-idle` interagir mal com sessão RDP/console bloqueada | Cobrir na matriz de fumaça |
 
 ## Achado fora de escopo — double-encoding na saída do PTY
@@ -397,7 +397,7 @@ nasce na leitura do ConPTY, dentro do servidor — o **mesmo código que o sidec
 local do Windows usa**, o que sugere que o terminal local do Windows sofre do
 mesmo problema, independentemente de host remoto.
 
-Próximo passo: confirmar no caminho local (terminal do Cockpit numa máquina
+Próximo passo: confirmar no caminho local (terminal do FlightDeck numa máquina
 Windows, sem nada de remoto). Se reproduzir, é plano próprio, na camada de PTY.
 
 O `tool/win_host_e2e.dart` reporta isso como `WARN`, não como falha: travar o
@@ -408,4 +408,4 @@ existe para pegar.
 
 - Serviço de usuário no Windows (equivalente ao launchd/systemd da Wave 3 do 58)
 - Download do bundle por release (D2 opção **b**), que remove a exigência de
-  Cockpit instalado no host
+  FlightDeck instalado no host

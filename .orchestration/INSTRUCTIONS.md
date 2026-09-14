@@ -56,18 +56,18 @@ visualmente sem abrir o arquivo. Exemplo:
 
 ### 3. Notifique o orquestrador
 
-**Caminho preferido — push via Cockpit.** Se o prompt contém um marker
-`[ORCH-REPLY:<tab-id>]`, o orquestrador está num pane do Cockpit esperando
+**Caminho preferido — push via FlightDeck.** Se o prompt contém um marker
+`[ORCH-REPLY:<tab-id>]`, o orquestrador está num pane do FlightDeck esperando
 push. Mande a conclusão direto pro pane dele (Enter em comando separado —
 `\n` no send vira newline no prompt, não submit):
 
 ```bash
-cockpit send --tab-id <tab-id> "[ORCH:<task-id>] <status> — <1 linha do resumo>"
-cockpit send-key --tab-id <tab-id> Enter
+flightdeck send --tab-id <tab-id> "[ORCH:<task-id>] <status> — <1 linha do resumo>"
+flightdeck send-key --tab-id <tab-id> Enter
 ```
 
 Faça isso **depois** de gravar o result file (passo 1) — o push é o aviso;
-o arquivo é o relatório. Se o `cockpit send` falhar (pane sumiu, socket
+o arquivo é o relatório. Se o `flightdeck send` falhar (pane sumiu, socket
 indisponível), siga em frente: o orquestrador tem o polling do result file
 como fallback.
 

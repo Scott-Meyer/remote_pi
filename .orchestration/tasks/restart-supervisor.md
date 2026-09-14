@@ -2,7 +2,7 @@
 
 ## Contexto
 
-O **Cockpit** (app desktop) ganhou um botão **"Reiniciar supervisor"** na aba
+O **FlightDeck** (app desktop) ganhou um botão **"Reiniciar supervisor"** na aba
 "Daemon Agents". Ele faz shell-out `remote-pi restart-supervisor`.
 
 Por que isso é necessário: o `pi-supervisord` é um processo Node long-running e
@@ -10,7 +10,7 @@ Por que isso é necessário: o `pi-supervisord` é um processo Node long-running
 supervisor em execução continua rodando o código antigo em memória até o
 **processo** ser reiniciado. Isso já mordeu 3x nesta leva (stop{id}/restart{id} e
 o modelo nome-no-registry só passaram a valer depois de reiniciar o supervisor à
-mão com `launchctl kickstart`). O Cockpit não tem como reiniciar o processo do
+mão com `launchctl kickstart`). O FlightDeck não tem como reiniciar o processo do
 supervisor de forma cross-plataforma — então essa lógica de SO deve morar no
 remote-pi, exposta como um comando de CLI.
 
@@ -33,9 +33,9 @@ remote-pi, exposta como um comando de CLI.
 
 3. Saída/exit:
    - Sucesso → imprimir uma confirmação curta e sair `0`.
-   - Falha → sair com exitCode **≠ 0** (o Cockpit detecta falha pelo exit).
+   - Falha → sair com exitCode **≠ 0** (o FlightDeck detecta falha pelo exit).
    - ⚠️ Hoje um comando desconhecido imprime o help e sai `0`. O sucesso real do
-     `restart-supervisor` **não** pode imprimir o banner de usage (o Cockpit usa
+     `restart-supervisor` **não** pode imprimir o banner de usage (o FlightDeck usa
      a presença de "Usage: remote-pi" pra detectar "comando indisponível"). Se
      der pra fazer comando desconhecido sair ≠ 0 também, melhor — mas não é
      obrigatório.
@@ -52,9 +52,9 @@ remote-pi, exposta como um comando de CLI.
   um comando de CLI puro que reinicia o serviço do SO. `stop{id}`/`restart{id}`
   já estão prontos e validados.
 
-## Como o Cockpit chama
+## Como o FlightDeck chama
 
-`remote-pi restart-supervisor` (sem args). O Cockpit resolve o binário em
+`remote-pi restart-supervisor` (sem args). O FlightDeck resolve o binário em
 `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin` ou no PATH.
 
 ## Aceite

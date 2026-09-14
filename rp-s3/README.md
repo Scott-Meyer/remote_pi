@@ -1,13 +1,13 @@
 # rp-s3 — servidor de downloads do Remote Pi
 
-Servidor HTTP mínimo (Rust + axum) que serve os instaladores do Cockpit (e
+Servidor HTTP mínimo (Rust + axum) que serve os instaladores do FlightDeck (e
 futuros produtos) a partir de um diretório montado como volume. Roda em
 container na VPS atrás do proxy que termina TLS em
 `https://rp-s3.jacobmoura.work`.
 
-É o lado "leitura" do passo 4 do [plano 43](../plan/43-cockpit-packaging.md).
-A VPS não tem acesso SSH, então o fluxo é: o CI (`cockpit-release.yml`)
-publica os binários como assets da **GitHub Release** `cockpit-v<versão>` e
+É o lado "leitura" do passo 4 do [plano 43](../plan/43-flightdeck-packaging.md).
+A VPS não tem acesso SSH, então o fluxo é: o CI (`flightdeck-release.yml`)
+publica os binários como assets da **GitHub Release** `flightdeck-v<versão>` e
 publica o `latest.json`/appcast direto neste host via `PUT /upload` (token
 Bearer). O rp-s3 serve o manifest na URL estável que o site consome.
 
@@ -35,7 +35,7 @@ secrets não vazam pra fork/PR, então na prática só o nosso repo publica):
     curl -fsS -X PUT \
       -H "Authorization: Bearer ${{ secrets.RP_S3_UPLOAD_TOKEN }}" \
       --data-binary @latest.json \
-      https://rp-s3.jacobmoura.work/upload/cockpit/latest.json
+      https://rp-s3.jacobmoura.work/upload/flightdeck/latest.json
 ```
 
 > Por que token e não "verificar o repositório"? Um header com o nome do
@@ -69,13 +69,13 @@ O `docker-compose.yml` monta o deploy path do CI **como o subdiretório do
 produto** — assim o host fica plano e a URL ganha o prefixo certo:
 
 ```
-host:  /Users/flutterando/cockpit/data/          (gravado via PUT /upload)
+host:  /Users/flutterando/flightdeck/data/          (gravado via PUT /upload)
          latest.json
          SHA256SUMS                              (opcional)
 
-mount: /Users/flutterando/cockpit/data → /data/cockpit (rw, pro upload)
+mount: /Users/flutterando/flightdeck/data → /data/flightdeck (rw, pro upload)
 
-URL:   https://rp-s3.jacobmoura.work/downloads/cockpit/latest.json
+URL:   https://rp-s3.jacobmoura.work/downloads/flightdeck/latest.json
 ```
 
 Os binários em si vivem nos assets da GitHub Release — as URLs dentro do

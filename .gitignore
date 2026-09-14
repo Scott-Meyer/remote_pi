@@ -81,12 +81,12 @@ pi-extension/test/.pi/
 # any `.pi/` dir at any depth (root, pi-extension/, subprojects).
 .pi/
 
-# Cockpit: tasks.json é versionado (config do Task Run); resto do .cockpit/ não
-!.cockpit/
-.cockpit/*
-!.cockpit/tasks.json
+# FlightDeck: tasks.json é versionado (config do Task Run); resto do .flightdeck/ não
+!.flightdeck/
+.flightdeck/*
+!.flightdeck/tasks.json
 graphify-out
-.cockpit/worktrees/
+.flightdeck/worktrees/
 
 # Material de divulgação (slides, PNGs exportados, copy de post). É conteúdo de
 # campanha, não do produto: muda por rede social e por publicação, e os PNGs

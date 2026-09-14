@@ -56,7 +56,7 @@ ajustar o ciclo de vida (o pipe some sozinho quando o dono morre → sem
 
 ## Blocos (sequenciados — A → B → C)
 
-> **Ordem importa**: sem A, instalar o serviço não adianta (CLI/Cockpit não
+> **Ordem importa**: sem A, instalar o serviço não adianta (CLI/FlightDeck não
 > alcançam o supervisor, e a mesh nem sobe). B sozinho sem A = supervisor fantasma.
 
 ### Bloco A — Socket local cross-platform (FUNDAÇÃO: `supervisor.sock` + `broker.sock`)
@@ -159,5 +159,5 @@ prontos. **Validar** rodando 1 job num Windows real.
   smoke de `schtasks` (valida XML) + smoke de named-pipe (best-effort). **Roda no
   GitHub só após push.** Falta o smoke do cron ponta-a-ponta (comentado no
   workflow — precisa do `pi` global + provider via secret).
-- **Paridade de install no Cockpit** — se o Cockpit (plano 37) passar a oferecer
+- **Paridade de install no FlightDeck** — se o FlightDeck (plano 37) passar a oferecer
   "instalar supervisor" pela UI, o backend Windows daqui é reusado.

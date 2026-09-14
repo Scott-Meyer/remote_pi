@@ -21,7 +21,7 @@ num commit pequeno e revisável.
   identidade FlightDeck.
 - `flightdeck/packages/flightdeck_{core,protocol,engine,remote,server}/` — pacotes Dart.
 - `flightdeck/plugins/flightdeck_pty/` — plugin PTY.
-- `flightdeck` — CLI canônica; `deck` e `ck` são apenas shims para ela.
+- `flightdeck` — CLI canônica; `deck` é o atalho curto para ela.
 - `flightdeck-server` e recursos `flightdeck-*` — sidecar e bundles.
 - `~/.flightdeck/` e `<Documents>/flightdeck/` — estado local.
 - `~/Applications/FlightDeck.app` — único bundle do produto, real e validado.
@@ -35,7 +35,7 @@ num commit pequeno e revisável.
 
 - `RemoteHostsController.addPin` devolve `(pin, created)` e não grava quando encontra o
   mesmo ID ou `(hostId,path)`.
-- `CockpitViewModel.createRemoteWorkspace` (renomeado na etapa 2) propaga o ID real do
+- `FlightDeckViewModel.createRemoteWorkspace` (renomeado na etapa 2) propaga o ID real do
   pin e `created`.
 - A CLI aplica `--name` somente se `created`; a lógica anterior de abrir terminal vazio
   continua valendo tanto para pin novo quanto reutilizado.
@@ -88,7 +88,8 @@ Somente depois do staging validado o modo install encerra a versão antiga, troc
 canônico, remove bundles antigos/build/temp/backups do produto e instala CLI + shims. Um
 `trap` limpa staging em falha. Nada aponta por symlink para `build/`.
 
-**Aceite:** flags inválidas falham; build puro não altera HOME; install falho conserva o app
+**Aceite:** flags inválidas falham; build puro não altera o estado instalado
+(`~/Applications`, `~/.flightdeck` ou hooks globais); install falho conserva o app
 anterior; install bem-sucedido deixa um único bundle do produto.
 
 ### 4. Migrar estado local sem perda
@@ -101,6 +102,11 @@ Depois de validar no FlightDeck os projetos, realms, layouts, pins e preferênci
 - Application Support, Preferences, HTTP storage e CrashReporter do bundle ID antigo;
 - CLI, skill e extensão de hook antigas;
 - registros antigos do LaunchServices.
+
+Credenciais SSH guardadas no Keychain exigem rekey separado: nunca imprimir segredos e
+não apagar entradas antigas até confirmar que a credencial equivalente funciona sob a
+nova identidade. Se a plataforma não permite migrar sem expor o segredo, parar e pedir
+que o usuário a informe novamente.
 
 Não varrer/apagar pastas arbitrárias pelo nome. Só remover paths comprovadamente criados
 pelo produto. Não tocar em estado remoto.
@@ -123,7 +129,7 @@ No bundle instalado, verificar:
 - `CFBundleIdentifier = dev.flightdeck.desktop`;
 - assinatura válida;
 - executável e recursos só usam nomes FlightDeck;
-- CLI `flightdeck`, `deck` e `ck` apontam para o mesmo binário canônico;
+- CLI `flightdeck` e `deck` apontam para o mesmo binário canônico;
 - exatamente um processo GUI do produto e sidecar correspondente;
 - nenhum DMG montado nem bundle `.app` de build, backup, staging ou nome antigo;
 - origin é `Scott-Meyer/remote_pi`; nada foi enviado ao upstream.

@@ -207,7 +207,7 @@ remote-pi cron log [<jobId>] [--tail N]   # lê o cron.jsonl
 
 ## Próximos planos / evolução
 
-- **Histórico/observabilidade na UI** (app ou cockpit): expor `cron list` +
+- **Histórico/observabilidade na UI** (app ou flightdeck): expor `cron list` +
   `cron log` numa tela — fora do escopo deste plano (que é o motor + CLI).
-- **Convergência cockpit ↔ supervisor** (plano 37 "Próximos"): um pane do cockpit
+- **Convergência flightdeck ↔ supervisor** (plano 37 "Próximos"): um pane do flightdeck
   "promovido" a daemon poderia herdar jobs de cron — futuro.

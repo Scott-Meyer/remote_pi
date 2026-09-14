@@ -1,0 +1,16 @@
+# Instalador Windows (Inno Setup) do FlightDeck. NÃO buildável neste Mac — gerado
+# no job `windows` do CI (windows-latest + Inno Setup). Sem assinatura nesta
+# fase (aviso do SmartScreen documentado no site).
+app_id: dev.flightdeck.desktop
+display_name: Remote Pi FlightDeck
+publisher_name: Jacob Moura
+publisher_url: https://jacobmoura.work
+# O binário do runner Windows é `flightdeck.exe` (BINARY_NAME=flightdeck).
+executable_name: flightdeck.exe
+# Instala por usuário (sem exigir admin) em %LOCALAPPDATA%\Programs.
+install_dir_name: "{userpf}\\Remote Pi FlightDeck"
+privileges_required: lowest
+create_desktop_icon: true
+setup_icon_file: windows/runner/resources/app_icon.ico
+locales:
+  - en

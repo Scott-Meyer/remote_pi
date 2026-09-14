@@ -1,0 +1,456 @@
+---
+name: flightdeck-cli
+description: Drive FlightDeck's multiplexed terminals from inside a tab. Use when you (an agent running in a FlightDeck terminal) need to open a new terminal tab or split pane, type text or press keys into your own or another tab, read another tab's or a task's output, list the open tabs/workspaces/tasks, or query the workspace's databases (SQL over registered connections / .dbq files). Triggers on tmux-like control needs — split-window/new-window, send-keys, run a command in another tab, read a tab's scrollback, inspect a task run's output, discover tab or task ids — and on database needs: run a SQL query, inspect a schema, list connections, execute a .dbq file. Also covers pane-layout orchestration: applying a `.ckp` layout file (open several terminals/splits and run their commands) via `flightdeck orchestrate`. Also covers `.kanban` board files: the markdown format the app renders as a kanban board (columns, cards, labels, notes, comments) — read it when asked to create, read or update a board, a task list or a roadmap the human can open in FlightDeck. Also covers `.notebook` folders (a notebook of tagged markdown notes the human reads in the app) and the `flightdeck note` verb that writes into one.
+---
+
+# flightdeck — FlightDeck's internal CLI
+
+You are running inside a **FlightDeck** terminal (an IDE that multiplexes
+terminals). The `flightdeck` command talks to the app and lets you **inject
+text/keys** into any tab and **list** tabs/workspaces. It only exists inside
+FlightDeck tabs (it is not on the global PATH).
+
+`deck` is the same binary under a shorter name — use whichever you prefer
+(`deck list-tabs` == `flightdeck list-tabs`). Every example below works with both.
+
+> **Tab vs pane.** A **tab** is a single terminal/agent session — that's the
+> unit this CLI addresses (`--tab-id`). A **pane** is the split leaf that can
+> hold several tabs; the CLI does not address it. `list-panes`/`read-pane` and
+> `$FLIGHTDECK_PANE_ID` are **legacy aliases** of `list-tabs`/`read-tab`/
+> `$FLIGHTDECK_TAB_ID` — prefer the new names.
+
+## Verbs
+
+- `flightdeck send [--tab-id <id>] [--enter] <text>` — type literal text; add
+  `--enter` to submit it (equivalent to a `send-key Enter` right after).
+  `--focused` targets whichever tab the human is looking at (the app resolves
+  it) — meant for tools driven by the human, not for agent orchestration, where
+  an explicit `--tab-id` is what keeps you from typing into the wrong tab.
+- `flightdeck send-key [--tab-id <id>] <Key>...` — press key(s): `Enter`, `Tab`,
+  `Escape`, `Space`, `BSpace`, `Up`/`Down`/`Left`/`Right`, `Home`/`End`,
+  `PageUp`/`PageDown`, `Delete`, and `C-<letter>` (e.g. `C-c` = Ctrl+C).
+- `flightdeck new-tab [--cwd <dir>] [--title <name>] [--split h|v]` — open a new
+  **terminal tab** in the app and print its id (`t12`). `--cwd` defaults to
+  your current directory; `--title` sets the stable tab label (so `send`/
+  `read-tab` can target it by name). Without `--split` the tab opens in the
+  same pane (next to yours); `--split h` (or `right`) splits side by side,
+  `--split v` (or `down`) stacks — tmux semantics. Capture the id to drive it:
+
+  ```sh
+  id=$(flightdeck new-tab --cwd ~/proj --title Worker --split h)
+  flightdeck send --tab-id "$id" --enter "npm test"
+  ```
+- `flightdeck close-tab [<label|tab-id>]` — close a tab and print its id: the
+  counterpart of `new-tab`. **Without a target it closes YOUR OWN tab**, which
+  ends the shell you are typing in — pass the target explicitly unless that is
+  what you mean. Closing the last tab of a split removes the split; closing the
+  last tab of a workspace leaves an empty tab behind (same as the tab's "x").
+
+  ```sh
+  id=$(flightdeck new-tab --cwd ~/proj --title Worker)
+  flightdeck close-tab "$id"     # or: flightdeck close-tab Worker
+  ```
+- `flightdeck open [--tab-id <id>] <file>` — open the file in the app's viewer
+  (tab next to the terminal). `flightdeck <file>` is the shortcut. The path is
+  resolved against the tab cwd (relative, `~` and absolute all work). Any type
+  opens as text — including extensionless ones (`.zprofile`, `Makefile`).
+- `flightdeck browse <url> [--json]` — open the app's built-in **browser tab** at
+  `<url>` (e.g. a dev server you just started: `flightdeck browse
+  http://localhost:3000`). A browser tab already open on the same host:port is
+  reused (it navigates/reloads instead of duplicating). Schemeless URLs get
+  `http://` for localhost targets and `https://` otherwise. On platforms
+  without an inline webview (Linux) the URL opens in the system browser —
+  `--json` output tells you which happened: `{"mode":"inline"|"system","url":…}`.
+- `flightdeck db <list|schema|query|run|execute>` — query the workspace's
+  databases. Connections are registered in `.flightdeck/databases.json` (Database
+  panel); SQLite files in the repo are auto-detected. Output is **one JSON
+  line**: `{"ok":{columns,rows,rowCount,truncated,elapsedMs}}` or
+  `{"error":{kind,message}}` (exit 1). The app executes everything — you never
+  see credentials. Examples:
+  - `flightdeck db list` — available connections (name, engine, target).
+  - `flightdeck db schema --db dev-local` / `… --db dev-local orders` — tables /
+    columns of a table.
+  - `flightdeck db query --db dev-local --sql "SELECT …" [--limit N]` — rows are
+    arrays (column order matches `columns`); `truncated: true` means the limit
+    cut the cursor — raise `--limit` if you need more.
+  - `flightdeck db execute --db dev-local --sql "UPDATE …"` — returns
+    `affectedRows`. **Connections are read-only for agents by default**: any
+    write is rejected with kind `read_only_connection` until the human enables
+    "Allow writes (agents)" on the connection in the Database panel — if you
+    hit it, ask the human instead of working around it. `db list` shows each
+    connection's `access` field (`read` | `readwrite`).
+  - `flightdeck db run <file.dbq>` — runs a `.dbq` file (SQL with `-- db:` /
+    `-- limit:` comment frontmatter). Prefer writing a `.dbq` when the human
+    should see the result too: the app shows it as a query tab and re-runs it
+    every time you save the file.
+  - Outside a FlightDeck tab, add `--workspace <id|path>`.
+- `flightdeck http <list|run> <file.http>` — runs HTTP requests written in a
+  `.http` file (REST Client / JetBrains HTTP Client syntax: `###` separates
+  requests, `@name = value` declares a variable, `{{name}}` interpolates it).
+  - `flightdeck http list api/users.http` — the requests in the file, with their
+    index, name, method and URL.
+  - `flightdeck http run api/users.http [--request <name|index>]` — runs one
+    (default: the first). Output is one JSON line: `{"ok":{"status":200,
+    "headers":{…},"elapsedMs":12,"json":{…}}}`; the body comes back as `json`
+    when it parses as JSON, otherwise as `body`. A 4xx/5xx is a normal
+    response — check `status`, not the exit code.
+  - Prefer writing a `.http` when the human should see the request too: the app
+    renders the same file as a request tab (editor + response), so they can
+    re-run and tweak it themselves.
+  - Outside a FlightDeck tab, add `--workspace <id|path>`.
+- `flightdeck redis --db <conn> <CMD> [args...]` — Redis/cache command. One
+  JSON line reply. e.g. `flightdeck redis --db cache HGETALL user:42`. Covers
+  Redis/Valkey/KeyDB.
+- `flightdeck mongo --db <conn> [--database <name>] --command '<json>'` — MongoDB
+  runCommand. The command is a runCommand document, e.g.
+  `flightdeck mongo --db app --command '{"find":"users","filter":{"active":true}}'`.
+  Output: one JSON line `{"ok": <reply>}` / `{"error":{kind,message}}`.
+  Documents use relaxed extended JSON (`{"$oid":…}`, `{"$date":…}`) both ways.
+  - **Which database it runs against**: the one in the connection URL's path,
+    if it has one; otherwise the one the human picked in the Database panel;
+    otherwise the command fails and the error lists the databases available.
+    `--database <name>` overrides all of it **for that call only** — it never
+    changes what the human is looking at, so prefer it whenever you are not
+    sure. Atlas URLs (`mongodb+srv://…/?…`) carry no database, so a connection
+    can legitimately have none until someone picks one.
+  - Discover databases with `--command '{"listDatabases":1}'` (routed to
+    `admin` for you — that is the only database the server accepts it on), then
+    collections with
+    `--database <name> --command '{"listCollections":1,"nameOnly":true}'`.
+    Running `listCollections` without knowing the database is the classic
+    mistake: you get `system.users`/`system.roles`/`system.version` back, which
+    is the `admin` database answering — not an empty deployment.
+- **Browse commands open a view for the human — they return no data.** Use
+  them to *show* what you found (after investigating with the commands above),
+  not to query:
+  - `flightdeck redis browse --db <conn> [--pattern 'user:*']` — opens the
+    editable Redis key table, pre-filtered. On an already-open table the
+    pattern **replaces** the current filter.
+  - `flightdeck mongo browse --db <conn> [--database <name>] <collection>
+    [--filter '<json>']` — here `--database` **does** change the connection's
+    current database, because the tab you open becomes what the human sees —
+    opens the Mongo collection browser (JSON document cards) pre-filtered.
+    The filter lands in the visible filter bar, editable by the human.
+- **Registering a connection** (`.flightdeck/databases.json` at the workspace
+  root — the file behind `flightdeck db list` and the Database panel):
+
+  ```json
+  {
+    "databases": [
+      {"name": "dev-local", "url": "sqlite:./app.db", "savePassword": false},
+      {"name": "app", "url": "postgres://user@localhost:5432/appdb", "savePassword": false},
+      {"name": "cache", "url": "redis://localhost:6379/0", "savePassword": false},
+      {"name": "docs", "url": "mongodb://localhost:27017/appdb", "savePassword": false}
+    ]
+  }
+  ```
+
+  The URL never carries the password — the human enters it in the Database
+  panel (stored in the OS keychain when `savePassword` is on). A personal,
+  gitignored overlay lives in `.flightdeck/databases.local.json` (same shape,
+  merged on top by name). The panel picks up edits on reload; `flightdeck db
+  list` confirms what's registered.
+- **Connecting through a bastion (SSH tunnel)** — a connection may carry an
+  optional `ssh` block. The app opens the tunnel and points the driver at a
+  local port; every `flightdeck db|redis|mongo` command works unchanged.
+
+  ```json
+  {
+    "databases": [
+      {
+        "name": "prod",
+        "url": "postgres://appuser@localhost:5432/appdb",
+        "savePassword": true,
+        "ssh": {
+          "host": "bastion.acme.dev",
+          "port": 22,
+          "user": "deploy",
+          "keyPath": "~/.ssh/id_ed25519",
+          "savePassphrase": false
+        }
+      }
+    ]
+  }
+  ```
+
+  With a tunnel, the database `host`/`port` are resolved **from the SSH
+  server** — `localhost` means the bastion itself, not your machine.
+  Authentication is **key only**; the block never holds a secret (the
+  passphrase, when the key has one, lives in the OS keychain).
+
+  **Agents need the credential pre-saved.** If the key is passphrase-protected
+  and the human hasn't enabled "Save passphrase" on the connection, your
+  command fails fast with kind `ssh_credential_required` — there is no prompt
+  on the CLI path. Ask the human to enable it rather than working around it.
+  Other SSH failures come back as `ssh_host_key_unknown` (first connection
+  must be approved once in the UI), `ssh_host_key_changed`, `ssh_auth_failed`,
+  `ssh_key_missing` and `ssh_connect_failed`.
+
+  **How the tunnel routes**, which matters when you read a failure: SQL engines
+  and Redis go through a local **port forward** (they speak to one address).
+  MongoDB goes through a local **SOCKS5 proxy** instead, because the driver
+  discovers replica set members via `hello` and then dials the hostnames the
+  server announces — a fixed local port would only ever reach the first node,
+  and `mongodb+srv://` not even that. With SOCKS the driver picks each
+  destination and the tunnel just routes, so Atlas/SRV and replica sets work
+  unchanged. This requires a MongoDB driver built with SOCKS5 support; without
+  it the driver rejects `proxyHost` loudly rather than connecting directly.
+- `flightdeck read-tab [<label|tab-id>] [--lines N] [--offset N] [--from-start]`
+  (alias: `read-pane`) — read a tab's **rendered output** as plain text (no
+  ANSI escapes; covers TUIs on the alt-screen too). Without a target it reads
+  your **own** tab; a target may be a stable tab `label` or a tab-id. Default
+  window: the **last 100 lines** (tail). `--lines N` sets the window size
+  (server cap 2000); `--from-start` anchors at the beginning of the buffer
+  instead of the end; `--offset N` skips N lines from the chosen anchor
+  (pagination: read the last 100, then `--lines 100 --offset 100` for the 100
+  before those). Output is always chronological (top→bottom) — the flags only
+  pick the window.
+- `flightdeck read-task <task-id> [--lines N] [--offset N] [--from-start]` — same
+  windowed read, but for a **task run's** output (the Task Run feature). Works
+  even if no task-output tab is open, but only for tasks that ran this boot.
+  Discover ids with `flightdeck list-tasks` (never guess them).
+- `flightdeck list-tasks [--json]` — tasks of **your workspace** (the one owning
+  the current tab, or `--tab-id`'s): `id`, `label`, `kind` (watch|oneShot),
+  `source` (detected|manual), `running`, `hasOutput` (`read-task` has output
+  to read). Ids are stable per workspace: `npm:<script>` (package.json
+  scripts), `flutter:run`/`flutter:test`, `json:<label>`
+  (`.flightdeck/tasks.json`).
+- `flightdeck list-tabs [--json]` (alias: `list-panes`) — active tabs: `id`,
+  `kind` (terminal|agent|file|task), `title` (dynamic), `label` (manual stable
+  name, or null), `workspaceId` (opaque UUID), `workspacePath` (workspace root
+  on disk), `working`, and `taskId` on task-output tabs (the id `read-task`
+  accepts). Resolve a tab by its stable `label`, not the dynamic `title`.
+- `flightdeck list-workspaces [--json]` — open projects: `id` (opaque UUID),
+  `name`, `path` (root on disk), `tabs`.
+- `flightdeck new-workspace <path> [--host <ssh-target>] [--name <title>] [--json]`
+  (aliases: `open-workspace`, `new-remote-workspace`) — add `<path>` as a top-level
+  project in FlightDeck's rail (local or remote), select it, and ensure an initial
+  terminal tab is opened. For remote workspaces, pass `--host` (SSH host or
+  `~/.ssh/config` alias). Idempotent: focuses an already open workspace.
+  Prints the workspace id (or full object with `--json`).
+- `flightdeck close-workspace [<id|path>] [--json]` — remove a top-level project
+  from FlightDeck (ends its tabs; files on disk are kept). Target may be an id,
+  path, or unique name (default: current workspace). Prints the closed workspace id.
+- `flightdeck rename-workspace [<id|path>] <new-name> [--json]` — update the
+  display title of a workspace in the rail. Target may be an id, path, or
+  unique name (default: current workspace).
+- `flightdeck orchestrate <file.ckp> [--json]` — apply a **pane layout** to the
+  current workspace: opens the terminals/splits declared in the file and types
+  each pane's `command`. Idempotent merge: a pane whose `name` already exists
+  as a tab label is skipped (running it twice is a no-op). Prints
+  `created:`/`skipped:` (or `{"created":[],"skipped":[]}` with `--json`).
+
+## Layout files (`*.ckp`)
+
+A `.ckp` file is a versionable YAML describing terminals to open in a
+workspace — the FlightDeck equivalent of a tmuxinator layout. One file = one
+layout; the layout takes the file's name.
+
+```yaml
+# dev.ckp — lives anywhere in the project (usually the root)
+autorun: worktree        # optional: auto-apply when a worktree of this
+                         # workspace is created (the only autorun trigger)
+panes:
+  - name: Frontend       # required, unique; becomes the tab's stable label
+    cwd: frontend        # relative to this file, forward slashes ONLY
+    command: claude      # optional; typed into the shell after it boots
+  - name: Backend
+    cwd: backend
+    split: right         # tab (default) | right (side by side) | down (stack)
+    command: npm run dev
+    platforms: [macos, linux]   # optional; omit = all OSes
+```
+
+Rules:
+- `cwd` must be **relative** with `/` separators — absolute paths and `\`
+  are rejected so the same committed file works on macOS, Linux and Windows.
+- `split` is relative to the **previous pane created in this run**; if that
+  one was skipped (merge), the next opens as a plain tab.
+- `platforms` accepts a string or list of `macos`/`windows`/`linux`.
+- In the app, right-click a `.ckp` file → **Open layout** does the same as
+  `flightdeck orchestrate`.
+
+## Board files (`*.kanban`)
+
+A `.kanban` file is a **markdown board**: the app renders it as columns and
+cards, but it stays plain markdown on disk. There is no `flightdeck kanban`
+verb and you do not need one — **edit the file with your normal file tools**.
+The open tab reloads by itself as soon as you save.
+
+Use `flightdeck open board.kanban` to put it in front of the human.
+
+```markdown
+---
+title: Roadmap                                   # the tab's label
+columns: [Backlog, Doing, Review, Done]          # documentation; `##` is what counts
+labels: {relay: orange, bug: red, ui: purple}    # name -> palette color
+---
+
+## Doing
+
+- [ ] Túnel SSH no host <!-- id: k3 labels: relay, infra -->
+      Free markdown note, indented under the title.
+
+      <!-- comment: 2026-09-07T08:30 -->
+      Newest comment.
+
+      <!-- comment: 2026-09-06T19:22 -->
+      Older comment.
+
+## Done
+
+- [x] Absorver o plugin de PTY <!-- id: k1 -->
+```
+
+Rules that matter when you write one:
+- **Columns are `##` headings**; cards are top-level `- [ ]` / `- [x]` items
+  under them. Order in the file is the order on screen.
+- **The last column means done.** The app keeps `[x]` in sync with position,
+  so move a card *and* flip its checkbox together — a `[x]` sitting in
+  `Backlog` is the one inconsistency the human will see.
+- **Ids are optional.** Write cards without `<!-- id: -->`; the app injects one
+  the first time the card is moved from the UI. Keep an id you find — it is
+  how the card is tracked across edits.
+- **Labels** are `labels: a, b` inside the card's HTML comment, and only get a
+  color if the frontmatter declares one. An undeclared label still works (grey).
+- **Notes** are the indented lines right under the title, up to the first
+  comment marker.
+- **Comments** are blocks opened by `<!-- comment: <ISO minute> -->`, indented
+  like the note. **Newest first**: insert a new one directly *above* the
+  existing ones (right after the note), so file order is reading order.
+- **Anything the parser does not model survives.** A stray paragraph inside a
+  column shows up as a read-only card instead of being dropped, and no edit
+  the app makes ever rewrites the whole file — so your formatting, comments and
+  blank lines stay put.
+
+Two things to prefer:
+- Writing a `.kanban` beats reporting a plan in chat when the human should be
+  able to follow it later: the board is a file they can open, drag and commit.
+- Editing the file beats driving the UI. Keep the diff small (the app does the
+  same — a card move is a three-line diff), and never reformat the whole file.
+
+## Notebooks (`*.notebook`)
+
+A folder whose name ends in `.notebook` is a **notebook**: one markdown file
+per note, each with a small YAML frontmatter. The app shows the folder as a
+single item in the file tree and opens it as a notes tab — notes grouped by
+tag on the left, the note on the right. Obsidian opens the same folder as-is.
+
+Write notes here while you work when the human should be able to read them
+later: findings, decisions, open questions, a summary of what you changed.
+Prefer **many short notes with tags** over one long file.
+
+```markdown
+---
+title: Túnel SSH no host
+tags: [relay, agent]
+created: 2026-09-07T10:12
+updated: 2026-09-07T11:40
+---
+
+Body in plain markdown.
+```
+
+The easy way is the verb — it writes the frontmatter for you, picks a unique
+file name (`2026-09-07-tunel-ssh-no-host.md`) and refreshes the open tab:
+
+```sh
+flightdeck note add notes.notebook --title "Túnel SSH no host" --tag relay \
+  --body "Porta 2222 fechada no firewall; abri via ufw."
+flightdeck note add notes.notebook --title "Resumo da sessão" --body - <<'NOTE'
+- Corrigi o parser do .kanban
+- Falta: testes do watcher
+NOTE
+flightdeck note list notes.notebook          # title  [tags]  path
+```
+
+Rules that matter:
+- `--tag` may repeat. The **`agent` tag is always added** by the verb — it is
+  how the human tells your notes from theirs. Keep it if you edit a note by
+  hand.
+- A note without frontmatter still works (title = file name, no tag), so
+  editing an existing `.md` with your normal file tools is fine. The tab
+  reloads by itself.
+- The **file name never changes** when the title changes; the title is
+  metadata. Don't rename files to "fix" titles.
+- Keep the frontmatter keys as they are (`title`, `tags`, `created`,
+  `updated`); the app rewrites only those lines and leaves the body untouched.
+- **Link notes with `[[Title]]`** (exact title, case-insensitive). The app
+  renders it as a clickable chip and lists backlinks on the target note. Use
+  it to connect a finding to the decision it led to, or a summary to the
+  notes it summarizes.
+- Images: put files under `_assets/` inside the notebook and reference them
+  as `![](_assets/name.png)` — the app draws them inline.
+
+## Target (--tab-id)
+
+Without `--tab-id`, the command acts on **your own tab** (via `$FLIGHTDECK_TAB_ID`,
+legacy fallback `$FLIGHTDECK_PANE_ID`). To drive **another** tab, pass
+`--tab-id <id>`.
+
+> Ids (`t0`, `t1`…) are sequential and **change on every app boot**. Never
+> guess an id: run `flightdeck list-tabs` first and use the `id` from there.
+
+## Usage pattern
+
+To run a command in a tab, use `--enter` (the text alone is only typed, not
+submitted):
+
+```sh
+flightdeck send --enter "npm test"
+```
+
+`--enter` presses Enter as a separate keystroke right after the text, which is
+what TUIs expect. The two-step form still works when you need to type something
+and press a different key:
+
+```sh
+flightdeck send "npm test"
+flightdeck send-key Enter
+```
+
+Cross-tab (drive another tab):
+
+```sh
+flightdeck list-tabs                        # find the target id, e.g. t4
+flightdeck send --tab-id t4 --enter "git status"
+```
+
+Interrupt a stuck process in another tab:
+
+```sh
+flightdeck send-key --tab-id t4 C-c
+```
+
+Read what another tab printed (e.g. check on a worker, debug a failure):
+
+```sh
+flightdeck read-tab t4 --lines 50            # last 50 lines of t4
+flightdeck read-tab Extension                # by stable label (last 100 lines)
+flightdeck read-tab t4 --lines 100 --offset 100   # the 100 lines before those
+```
+
+Read a task run's output (dev server, build, test — the Task Run feature):
+
+```sh
+flightdeck list-tasks                        # ids: ● = running, [output] = readable
+flightdeck read-task npm:dev --lines 80      # tail of the "npm:dev" task output
+```
+
+Typical loop — dispatch work to a tab, wait, then read the result:
+
+```sh
+flightdeck send --tab-id t4 --enter "npm test"
+# poll `flightdeck list-tabs --json` until t4 shows "working": false, then:
+flightdeck read-tab t4 --lines 60
+```
+
+## Common errors
+
+- "FLIGHTDECK_STATUS_SOCK is unset" → you are not inside a FlightDeck terminal.
+- "tab ... does not exist" → stale id (app reboot). Run `list-tabs` again.
+- "tab ... is not a terminal" → the target is an agent/file tab, not a shell.
+- "has no readable output" → read-tab target is an agent/file tab; only
+  terminal and task-output tabs are readable.
+- "no output recorded for task ..." → the task never ran this app boot, or the
+  id is wrong — check both with `flightdeck list-tasks` (`[output]` = readable).

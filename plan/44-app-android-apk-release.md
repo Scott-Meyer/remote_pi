@@ -4,7 +4,7 @@
 
 O app mobile (`app/`) tem o iOS na App Store (plano de submissão próprio) e o
 Android na **Play Store**, que **continua como canal**. Este plano adiciona um
-canal extra no Android: **APK direto**, no mesmo modelo do plano 43 (cockpit) —
+canal extra no Android: **APK direto**, no mesmo modelo do plano 43 (flightdeck) —
 GitHub Release em tag própria, asset baixável, ofertado na `/download` do site.
 
 ### Decisões (2026-06-12)
@@ -12,7 +12,7 @@ GitHub Release em tag própria, asset baixável, ofertado na `/download` do site
 | Tema | Decisão |
 |---|---|
 | Canal | APK assinado como asset de GitHub Release. ⚠️ **Revisão 2026-06-12**: a **Play Store é MANTIDA** como canal — o APK direto é **adicional**, não substituto ("não precisamos subir pras lojas" ≠ "sair da loja"). Site oferta os dois caminhos (loja + `/download`). O aviso de update in-app pode aparecer mesmo pra instalação vinda da loja — **sem** detecção de origem de instalação (decisão do usuário: não tem problema) |
-| Tag | **`app-v<versão>`** (separada da `cockpit-v*`; versão bate com `app/pubspec.yaml`) |
+| Tag | **`app-v<versão>`** (separada da `flightdeck-v*`; versão bate com `app/pubspec.yaml`) |
 | Nome do asset | **`RemotePi.apk`** (+ `SHA256SUMS`) |
 | Assinatura | Keystore release `remotepi-release.jks` (alias `remotepi`). Original guardado no iCloud (`~/Library/Mobile Documents/com~apple~CloudDocs/Flutterando/RemotePi/Android/`), cópia de trabalho gitignored em `app/android/signing/` |
 | Secrets | `ANDROID_KEYSTORE` (jks base64), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_PASSWORD`, `ANDROID_KEY_ALIAS` — **cadastrados em 2026-06-12** |
@@ -30,7 +30,7 @@ a release `app-v*` com `RemotePi.apk` + `SHA256SUMS` (`--latest=false`).
 ## Manifest do app (espelho do contrato do plano 43)
 
 O workflow gera e anexa um `latest.json` próprio do app — **mesmo schema** do
-cockpit (passo 4 do plano 43), com 1 artefato:
+flightdeck (passo 4 do plano 43), com 1 artefato:
 
 ```json
 { "version": "1.1.0", "date": "…", "notes": "…",
@@ -39,7 +39,7 @@ cockpit (passo 4 do plano 43), com 1 artefato:
                    "sha256": "…", "size": 0 } ] }
 ```
 
-Gate manual idêntico ao do cockpit: colocar o `latest.json` em
+Gate manual idêntico ao do flightdeck: colocar o `latest.json` em
 `/Users/flutterando/app/data/` no host do rp-s3 (volume `/data/app`, já no
 docker-compose) → servido em
 `https://rp-s3.jacobmoura.work/downloads/app/latest.json`.
@@ -54,7 +54,7 @@ docker-compose) → servido em
 ### 2. Seção do app na página `/download` do site (site/)
 
 Nova seção "Remote Pi — App (Android)" consumindo o manifest do app (URL
-configurável, mock + fallback gracioso, mesmo pattern do cockpit). Instruções:
+configurável, mock + fallback gracioso, mesmo pattern do flightdeck). Instruções:
 baixar `RemotePi.apk`, permitir instalação de apps desconhecidos, sha256.
 
 **Aceite**: `pnpm lint && pnpm build` verdes; seção renderiza do mock quando o

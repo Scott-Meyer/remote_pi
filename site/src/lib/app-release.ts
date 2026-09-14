@@ -1,7 +1,7 @@
 /* ===========================================================
    Remote Pi App (Android) — release manifest
-   Mirror of src/lib/cockpit-release.ts for the mobile app (plan/44).
-   Same `latest.json` schema as the cockpit (plan/43, step 4), but the
+   Mirror of src/lib/flightdeck-release.ts for the mobile app (plan/44).
+   Same `latest.json` schema as the flightdeck (plan/43, step 4), but the
    app ships a single artifact: an Android APK (platform "android",
    arch "universal", format "apk"). Distribution is direct APK — no
    Play Store — so the URL points at the GitHub Release asset.

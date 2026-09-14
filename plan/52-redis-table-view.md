@@ -16,23 +16,23 @@ Decisões fechadas na conversa:
 
 | # | Decisão |
 |---|---|
-| A | **Sem arquivo `.redis`** — a view abre direto da conexão no painel Database (conexão Redis → tab com a tabela). O artefato é a conexão, não um arquivo. Script reprodutível continua sendo `cockpit redis` (agente) |
+| A | **Sem arquivo `.redis`** — a view abre direto da conexão no painel Database (conexão Redis → tab com a tabela). O artefato é a conexão, não um arquivo. Script reprodutível continua sendo `flightdeck redis` (agente) |
 | B | **Commit imediato por célula** — cada edição confirmada (Enter/blur) vira um comando Redis atômico (`SET`, `EXPIRE`, `HSET`…). Sem estado sujo, sem botão Save. Esc cancela |
 | C | **Inline direto só para STRING e TTL.** Tipos compostos (HASH/SET/ZSET/LIST) expandem a linha/célula mostrando o valor completo antes de permitir salvar — nunca editar sobre preview truncado |
 | D | **Type imutável em chave existente** — trocar tipo no Redis é DEL+recreate; o seletor de tipo só existe na linha nova do `+`. Na linha existente, type é indicador/filtro |
 | E | **SCAN paginado desde o dia 1** — nunca `KEYS *`. Cursor com count ~100 + "load more"/scroll |
 | F | **Mini-toolbar de uma linha** no lugar do editor que sumiu: campo de pattern (`user:*`), refresh, `+`, contador de chaves carregadas |
-| G | Paridade agent-first: a UI usa os **mesmos comandos** que `cockpit redis` executaria — comportamento idêntico humano/agente |
+| G | Paridade agent-first: a UI usa os **mesmos comandos** que `flightdeck redis` executaria — comportamento idêntico humano/agente |
 
-## Estrutura esperada (cockpit/)
+## Estrutura esperada (flightdeck/)
 
-- `lib/app/cockpit/ui/widgets/db_redis_table.dart` — a tabela + toolbar
+- `lib/app/flightdeck/ui/widgets/db_redis_table.dart` — a tabela + toolbar
 - Branch por engine no widget da tab Database existente (onde hoje renderiza
   editor+resultado): `engine == redis → RedisTableView`
 - `domain/`: contrato de browse Redis tipado (scan paginado, get/set/del/expire,
   leitura completa de compostos) — sem `Map<String,dynamic>` cru na ui
 - `data/`: implementação sobre o driver anaki já existente (mesmo caminho do
-  `cockpit redis`)
+  `flightdeck redis`)
 
 ## Passos
 
@@ -43,7 +43,7 @@ Decisões fechadas na conversa:
      interno, atômico via MULTI se o driver suportar), `setTtl(key, segundos | persist)`,
      `delete(key)`, `create(key, type, valor, ttl?)`
    - Aceite: contrato em `domain/`, impl em `data/` reusando o driver do plano 51;
-     nenhum comando novo no wire do CLI (já existe `cockpit redis`).
+     nenhum comando novo no wire do CLI (já existe `flightdeck redis`).
 
 2. **UI: tabela somente-leitura + toolbar**
    - Branch por engine na tab; colunas key/value/type/ttl; TTL `-1` renderiza
@@ -61,7 +61,7 @@ Decisões fechadas na conversa:
    - Feedback de escrita: célula confirma visualmente (flash/check breve);
      falha → vermelho + revert pro valor anterior + erro visível.
    - Aceite: editar STRING e TTL reflete no servidor (conferível via
-     `cockpit redis --db X GET/TTL`); falha de comando não deixa a célula
+     `flightdeck redis --db X GET/TTL`); falha de comando não deixa a célula
      mentindo valor.
 
 4. **Compostos + criar chave**
@@ -81,12 +81,12 @@ Decisões fechadas na conversa:
 - [x] SCAN paginado + pattern filter; nunca `KEYS *` no código (coberto por teste)
 - [x] STRING/TTL inline, compostos via expansão com valor completo, delete com confirm
 - [x] `+` cria chave dos 5 types; type imutável em chave existente
-- [x] Escrita = comandos idênticos aos do `cockpit redis` (paridade agent-first —
+- [x] Escrita = comandos idênticos aos do `flightdeck redis` (paridade agent-first —
       `RedisBrowseService` roda sobre o mesmo `DbQueryService`/`NoSqlRunner`)
 - [x] `flutter analyze` zero issues; strings user-facing em inglês
 - [ ] E2E manual contra Redis local (o mesmo dbtest do anaki serve)
 
-Implementado 2026-07-19 (cockpit/). Extras da implementação: tab persiste no
+Implementado 2026-07-19 (flightdeck/). Extras da implementação: tab persiste no
 layout (restore por `{type: 'redis', conn}`), uma tab por conexão (reabrir
 foca), lote numa conexão só (`NoSqlRunner.redisMany`) pra página de SCAN não
 pagar open/close por comando, testes unitários do serviço

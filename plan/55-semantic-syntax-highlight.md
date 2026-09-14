@@ -2,10 +2,10 @@
 
 ## Contexto
 
-Pergunta do usuário: dá pra ver o código no cockpit colorido por
+Pergunta do usuário: dá pra ver o código no flightdeck colorido por
 **classe/variável** (tipo o tema Dracula do VSCode) e não só léxico?
 
-Investigação (scout-cockpit, 2026-07-24) mostrou dois achados:
+Investigação (scout-flightdeck, 2026-07-24) mostrou dois achados:
 
 1. **Tema Dracula léxico já existe e já é selecionável** —
    `SyntaxColors.draculaDark`/`draculaLight` (`core/ui/themes/syntax_colors.dart:74-103`),
@@ -108,9 +108,9 @@ contornar com um `TextField` por linha, pois seleção entre linhas quebra.
 Próximo passo viável, se necessário: tokenização por linha com estado do lexer
 cacheado — o pacote `highlight` suporta (`_parse(continuation:)` + `Result.top`)
 mas não expõe, então exigiria vendorizar (padrão já usado no repo: xterm,
-`cockpit_pty`).
+`flightdeck_pty`).
 
-## Estrutura esperada (cockpit/)
+## Estrutura esperada (flightdeck/)
 
 - `core/data/lsp/lsp_client_impl.dart` — anunciar capability
   `textDocument.semanticTokens` no `_handshake()` (linha 106-115); capturar
@@ -125,7 +125,7 @@ mas não expõe, então exigiria vendorizar (padrão já usado no repo: xterm,
   opcional `List<SemanticRange> semanticTokens` (mesmo padrão de
   `DiagnosticRange`/`MatchSpan`); overlay de cor por semantic type funde por
   cima do léxico igual ao squiggle de diagnostics
-- `cockpit/ui/widgets/file_viewer.dart` — `_startLsp()` ganha companion
+- `flightdeck/ui/widgets/file_viewer.dart` — `_startLsp()` ganha companion
   `_requestSemanticTokens()`; resultado guardado em state (`_semanticTokens`),
   igual ao `_diagnostics`; re-pedido no debounce do `didChange` (mesmo timer,
   não um novo)

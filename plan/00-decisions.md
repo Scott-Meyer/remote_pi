@@ -22,13 +22,13 @@ Numeração `00-` é proposital: este arquivo carrega antes dos planos numerados
 | **Relay stateless** | Sem persistência. Encaminha ciphertext entre dois peers identificados por pubkey. ~200 linhas de Rust |
 | **Relay open-source + self-hostável** | Compromisso de credibilidade. Usuário paranoico roda o próprio. Não vira ponto único de comprometimento |
 
-## Cockpit — motor de agente (fechado 2026-08-12 — plano 58)
+## FlightDeck — motor de agente (fechado 2026-08-12 — plano 58)
 
 | Decisão | Razão / nota |
 |---|---|
-| **`pi --mode rpc` DEPRECADO como motor do Cockpit** | ~~Cockpit spawna `pi --mode rpc` como motor do agente (plano 37, decisão B/C)~~ **revertido**. O Cockpit virou **terminal-first**: harnesses (Pi, Claude Code, Codex CLI) rodam como **programas de terminal** comuns, não via harness RPC. A flag `enableAgent` nasce **OFF** (terminal puro); o RPC era um acoplamento a mais sem ganho pro fluxo real |
-| **Domínios estruturados = `cockpit-server`, não RPC** | Terminais/arquivos/git/databases (local via sidecar loopback, remoto via SSH) rodam no **`cockpit-server`** (Dart AOT, plano 58) — protocolo JSONL próprio, não o `pi --mode rpc`. Local-only (decisão B do plano 37) reaberto: o Cockpit alcança hosts remotos por SSH |
-| **Sem remoção imediata do código RPC** | Deprecação é de **direção**, não big-bang: o harness RPC (`lib/app/cockpit/data/rpc/`) e os docs (`docs/rpc-protocol.md`) seguem no repo enquanto houver quem os use; feature nova não deve depender de `pi --mode rpc` |
+| **`pi --mode rpc` DEPRECADO como motor do FlightDeck** | ~~FlightDeck spawna `pi --mode rpc` como motor do agente (plano 37, decisão B/C)~~ **revertido**. O FlightDeck virou **terminal-first**: harnesses (Pi, Claude Code, Codex CLI) rodam como **programas de terminal** comuns, não via harness RPC. A flag `enableAgent` nasce **OFF** (terminal puro); o RPC era um acoplamento a mais sem ganho pro fluxo real |
+| **Domínios estruturados = `flightdeck-server`, não RPC** | Terminais/arquivos/git/databases (local via sidecar loopback, remoto via SSH) rodam no **`flightdeck-server`** (Dart AOT, plano 58) — protocolo JSONL próprio, não o `pi --mode rpc`. Local-only (decisão B do plano 37) reaberto: o FlightDeck alcança hosts remotos por SSH |
+| **Sem remoção imediata do código RPC** | Deprecação é de **direção**, não big-bang: o harness RPC (`lib/app/flightdeck/data/rpc/`) e os docs (`docs/rpc-protocol.md`) seguem no repo enquanto houver quem os use; feature nova não deve depender de `pi --mode rpc` |
 
 ## Pareamento
 
@@ -121,7 +121,7 @@ Para ser honesto desde o início:
 | **Não criar abstração antes de precisar** | YAGNI agressivo. Aplicado em: sem versionamento de protocolo, sem `--persist` flag no `/remote-pi`, sem recovery de pareamento |
 | **Subagent só vale com 3 critérios** | Prompt rico + saída estruturada + contexto isolado. Senão é overhead |
 | **CLAUDE.md silencioso sobre irmãos** | Persona vive no projeto. Único acoplamento aceitável: gatilho `[ORCH:<id>]` → lê `.orchestration/INSTRUCTIONS.md` |
-| **Plan/ é cockpit do orquestrador** | Subagentes não navegam planos altos. Recebem tasks decompostas |
+| **Plan/ é flightdeck do orquestrador** | Subagentes não navegam planos altos. Recebem tasks decompostas |
 
 ---
 
@@ -138,7 +138,7 @@ Estas decisões foram **propositalmente adiadas**. Quando alguém quiser fechar,
 | Conta de usuário opcional | Quando aparecer dor multi-device |
 | Push notifications | v2, após MVP validado |
 | Multi-relay / federação | Provavelmente nunca. Só se relay público virar gargalo |
-| Apps nativos (Swift/Kotlin) em vez de Flutter | Provavelmente nunca. Reconsiderar só se Flutter limitar features críticas (ex: integração profunda iOS Keychain). **Desktop: reconsiderado e mantido Flutter — decidido no plano 37, validado em produção (Cockpit 1.13.0; plano encerrado 2026-07-19)** |
+| Apps nativos (Swift/Kotlin) em vez de Flutter | Provavelmente nunca. Reconsiderar só se Flutter limitar features críticas (ex: integração profunda iOS Keychain). **Desktop: reconsiderado e mantido Flutter — decidido no plano 37, validado em produção (FlightDeck 1.13.0; plano encerrado 2026-07-19)** |
 
 ---
 
@@ -147,9 +147,9 @@ Estas decisões foram **propositalmente adiadas**. Quando alguém quiser fechar,
 | Decisão | Razão / nota |
 |---|---|
 | **App mobile: distribuição DUPLA** | iOS = **App Store**; Android = **Play Store** (AAB) **+ APK direto** (`RemotePi.apk` em GitHub Release `app-v*`, ofertado na `/download` do site). A frase "não precisamos subir pras lojas" significava não *depender* delas — as lojas continuam canais. Artefatos store-ready verificados em `1.1.0+5` (IPA assinado Apple Distribution + AAB assinado release), build manual via agente do App; o CI cobre só o APK direto |
-| **Cockpit (desktop): fora de lojas** | DMG notarizado (macOS) + EXE sem assinatura (Windows, SmartScreen documentado) + deb/rpm (Linux x64+arm64) via GitHub Release `cockpit-v*` |
+| **FlightDeck (desktop): fora de lojas** | DMG notarizado (macOS) + EXE sem assinatura (Windows, SmartScreen documentado) + deb/rpm (Linux x64+arm64) via GitHub Release `flightdeck-v*` |
 | **Hospedagem de binários** | Assets de GitHub Releases (tags prefixadas por produto; monorepo ok como puro storage). VPS **sem SSH** → `rp-s3` serve só os `latest.json` por produto; usuário posiciona o manifest manualmente = **gate de publicação** |
-| **Updates** | ~~Sem auto-update.~~ **(revisto 2026-06-27 — plano 47)**: Cockpit **macOS/Windows** ganham **self-update** via Sparkle/WinSparkle (pacote `auto_updater`): baixa em background, card "reiniciar p/ instalar", troca + relança. **Linux mantém notify manual.** Gate de publicação manual no rp-s3 **continua** (agora cobre também os `appcast-{macos,windows}.xml`). Site (`/download`) + card in-app dispensável (Cockpit e app Android) seguem lendo o `latest.json` como fallback / caminho do Linux+Android; card pode aparecer pra install de loja (sem detecção de origem) |
+| **Updates** | ~~Sem auto-update.~~ **(revisto 2026-06-27 — plano 47)**: FlightDeck **macOS/Windows** ganham **self-update** via Sparkle/WinSparkle (pacote `auto_updater`): baixa em background, card "reiniciar p/ instalar", troca + relança. **Linux mantém notify manual.** Gate de publicação manual no rp-s3 **continua** (agora cobre também os `appcast-{macos,windows}.xml`). Site (`/download`) + card in-app dispensável (FlightDeck e app Android) seguem lendo o `latest.json` como fallback / caminho do Linux+Android; card pode aparecer pra install de loja (sem detecção de origem) |
 
 ---
 

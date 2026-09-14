@@ -8,7 +8,7 @@ import 'package:dio/dio.dart';
 /// mesh, plano 24). Timeout curto; qualquer falha → `null` (nunca lança), pra
 /// que o aviso seja totalmente silencioso quando offline/indisponível.
 ///
-/// Espelha o schema do manifest do Cockpit (plano 43/44), com 1 artefato
+/// Espelha o schema do manifest do FlightDeck (plano 43/44), com 1 artefato
 /// `android`/`apk`. O parsing/validação fica em [UpdateInfo.fromJson].
 class UpdateCheckerImpl implements UpdateChecker {
   UpdateCheckerImpl({

@@ -1,0 +1,1400 @@
+import 'dart:async' show unawaited;
+import 'dart:convert';
+import 'dart:io' show Directory, File, FileSystemException, Platform;
+
+import 'package:flightdeck/app/flightdeck/domain/contracts/http_request_runner.dart';
+import 'package:flightdeck/app/flightdeck/domain/contracts/task_discovery.dart';
+import 'package:flightdeck/app/flightdeck/domain/contracts/task_runner_gateway.dart';
+import 'package:flightdeck/app/flightdeck/domain/contracts/terminal_status_server.dart';
+import 'package:flightdeck/app/flightdeck/domain/entities/db_connection.dart';
+import 'package:flightdeck/app/flightdeck/domain/entities/db_result.dart';
+import 'package:flightdeck/app/flightdeck/domain/entities/dbq_document.dart';
+import 'package:flightdeck/app/flightdeck/domain/entities/http_document.dart';
+import 'package:flightdeck/app/flightdeck/domain/entities/notebook_document.dart';
+import 'package:flightdeck/app/flightdeck/domain/exceptions/http_request_error.dart';
+import 'package:flightdeck/app/flightdeck/domain/entities/project.dart';
+import 'package:flightdeck/app/flightdeck/domain/entities/remote_host.dart';
+import 'package:flightdeck/app/flightdeck/data/remote/ssh_tunnel.dart';
+import 'package:flightdeck/app/flightdeck/domain/entities/sql_statements.dart';
+import 'package:flightdeck/app/flightdeck/domain/services/db_access_gate.dart';
+import 'package:flightdeck/app/flightdeck/domain/services/db_query_service.dart';
+import 'package:flightdeck/app/flightdeck/domain/services/mongo_browse_service.dart';
+import 'package:flightdeck/app/flightdeck/domain/entities/browser_capability.dart';
+import 'package:flightdeck/app/core/domain/result.dart';
+import 'package:flightdeck/app/core/utils/path_utils.dart';
+import 'package:flightdeck/app/flightdeck/ui/session/agent_session.dart';
+import 'package:flightdeck/app/flightdeck/ui/session/browser_session.dart';
+import 'package:flightdeck/app/flightdeck/ui/session/notebook_session.dart';
+import 'package:flightdeck/app/flightdeck/ui/session/file_viewer_session.dart';
+import 'package:flightdeck/app/flightdeck/ui/session/mongo_browser_session.dart';
+import 'package:flightdeck/app/flightdeck/ui/session/pane_item.dart';
+import 'package:flightdeck/app/flightdeck/ui/session/redis_browser_session.dart';
+import 'package:flightdeck/app/flightdeck/ui/session/task_output_session.dart';
+import 'package:flightdeck/app/flightdeck/ui/session/task_terminal_store.dart';
+import 'package:flightdeck/app/flightdeck/ui/session/terminal_read_window.dart';
+import 'package:flightdeck/app/flightdeck/ui/session/terminal_session.dart';
+import 'package:flightdeck/app/flightdeck/ui/states/pane_node.dart' show SplitDir;
+import 'package:flightdeck/app/flightdeck/ui/viewmodels/flightdeck_viewmodel.dart';
+
+/// Atende os comandos da CLI interna `flightdeck` (mesmo socket do
+/// `TerminalStatusServer`), extraído do `FlightDeckViewModel` (refactor
+/// 2026-07-19). Roda **fora** da árvore de widgets — não toca `BuildContext`,
+/// só lê/muta o estado do shell via a API pública do VM. Retorna rápido (o
+/// `insertText` só enfileira o write no PTY).
+class FlightDeckCliHandler {
+  FlightDeckCliHandler(
+    this._vm,
+    this._db,
+    this._http,
+    this._tasks,
+    this._taskRuns,
+    this._taskTerms,
+  );
+
+  final FlightDeckViewModel _vm;
+  final DbQueryService _db;
+  final HttpRequestRunner _http;
+  final TaskDiscovery _tasks;
+  final TaskRunnerGateway _taskRuns;
+  final TaskTerminalStore _taskTerms;
+
+  /// Atende um comando da CLI interna `flightdeck` (via o mesmo socket do
+  /// [TerminalStatusServer]). Roda **fora** da árvore de widgets — não toca
+  /// `BuildContext`, só lê/muta o estado da VM. Retorna rápido (o `insertText`
+  /// só enfileira o write no PTY).
+  Future<FlightDeckCommandResult> handle(FlightDeckCommand rawCommand) async {
+    // `--focused` chega como o sentinela `@focused` no `tabId`: quem sabe qual
+    // aba está em foco é a VM, não a CLI. Resolver aqui (e não em cada case)
+    // vale pra todo comando que mira aba. Ferramenta externa (ditado por voz,
+    // por exemplo) não tem como saber o id, e copiá-lo a cada uso é inviável.
+    final c = _resolveFocusSentinel(rawCommand);
+    if (c == null) {
+      return const FlightDeckCommandResult.fail(
+        'no focused tab (is a workspace open?)',
+      );
+    }
+    switch (c.cmd) {
+      // `send` e `send-key` chegam unificados como `write` (a CLI já resolveu o
+      // texto/tecla em bytes UTF-8, transmitidos em base64 pra não quebrar o
+      // framing de uma-linha-por-conexão).
+      case 'write':
+        final id = c.tabId;
+        if (id == null || id.isEmpty) {
+          return const FlightDeckCommandResult.fail(
+            'missing tabId (use --tab-id or run inside a FlightDeck terminal)',
+          );
+        }
+        final s = _vm.session(id);
+        if (s == null) {
+          return FlightDeckCommandResult.fail('tab "$id" does not exist');
+        }
+        if (s is! TerminalSession) {
+          return FlightDeckCommandResult.fail('tab "$id" is not a terminal');
+        }
+        final raw = (c.args['data'] ?? '').toString();
+        String text;
+        try {
+          text = utf8.decode(base64.decode(raw));
+        } catch (_) {
+          return const FlightDeckCommandResult.fail(
+            'invalid data (base64 expected)',
+          );
+        }
+        s.insertText(text);
+        return const FlightDeckCommandResult.ok();
+
+      case 'list-panes':
+        final focusedId = _vm.focusedTabId;
+        final panes = _vm.allSessions
+            .map(
+              (s) => <String, dynamic>{
+                'id': s.id,
+                'kind': _paneKind(s),
+                'title': s.title,
+                // Rótulo manual estável (duplo-clique / "Rename"); `null` quando
+                // a aba segue o título automático. É por ESTE campo que a
+                // orquestração resolve pane por nome — não pelo `title` dinâmico
+                // (que o claude/OSC reescrevem) nem pelo cwd (volátil).
+                'label': s.manualLabel,
+                'workspaceId': s.projectId,
+                // Raiz do workspace no disco. `workspaceId` é um UUID opaco
+                // desde a migração dos realms — quem precisa do caminho (ex.:
+                // scripts que casavam por sufixo) usa este campo.
+                'workspacePath': _vm.projectById(s.projectId)?.effectiveRoot,
+                // Aba de task output → id da task espelhada (`npm:dev`…), o
+                // mesmo aceito por `read-task`. Ausente nas demais tabs.
+                if (s is TaskOutputSession) 'taskId': s.taskId,
+                'working': s.isWorking,
+                // Aba em foco (a que `--focused` mira). Sempre no máximo uma.
+                'focused': s.id == focusedId,
+              },
+            )
+            .toList();
+        return FlightDeckCommandResult.ok(panes);
+
+      // `flightdeck open <path>` — abre um arquivo no viewer. A CLI já resolveu
+      // pro caminho absoluto (o cwd do pane ≠ cwd do app). Abre no workspace do
+      // pane que emitiu (trazendo-o pra frente se não for o ativo) e como aba
+      // ao lado do próprio terminal (mesma folha).
+      case 'open':
+        final path = (c.args['path'] ?? '').toString();
+        if (path.isEmpty) {
+          return const FlightDeckCommandResult.fail('missing path');
+        }
+        // Aba remota: o path é do HOST. Checar no disco do cliente daria
+        // "file not found" (ou, pior, abriria um homônimo local) — quem valida
+        // é o `fs.read` do outro lado, dentro de `openFile`.
+        // `.notebook` é pasta e abre como caderno; o resto tem que ser arquivo.
+        if (!_isRemoteTab(c.tabId) &&
+            !await File(path).exists() &&
+            !(isNotebookFolder(path) && await Directory(path).exists())) {
+          return FlightDeckCommandResult.fail('file not found: "$path"');
+        }
+        final from = c.tabId;
+        String? targetProject;
+        String? targetLeaf;
+        if (from != null && from.isNotEmpty) {
+          final s = _vm.session(from);
+          if (s != null) {
+            targetProject = s.projectId;
+            targetLeaf = _vm.leafOfTab(targetProject, from);
+          }
+        }
+        if (targetProject != null && targetProject != _vm.selectedProjectId) {
+          _vm.selectProject(targetProject);
+        }
+        if (_vm.selectedProjectId == null) {
+          return const FlightDeckCommandResult.fail(
+            'no active workspace to open the file in',
+          );
+        }
+        await _vm.openFile(path, inPane: targetLeaf, isPreview: false);
+        return const FlightDeckCommandResult.ok();
+
+      // `flightdeck new-tab` — cria uma aba de terminal. A CLI já resolveu o cwd
+      // pro absoluto. Ancora no workspace/pane da tab emissora (trazendo o
+      // workspace pra frente, mesma regra do `open`); `split` = right|down
+      // divide a pane em vez de anexar a aba. Devolve `{tabId}` da tab criada.
+      case 'new-tab':
+        final cwd = (c.args['cwd'] ?? '').toString();
+        if (cwd.isEmpty) {
+          return const FlightDeckCommandResult.fail('missing cwd');
+        }
+        // Idem `open`: num terminal remoto o cwd é uma pasta do host.
+        if (!_isRemoteTab(c.tabId) && !await Directory(cwd).exists()) {
+          return FlightDeckCommandResult.fail('directory not found: "$cwd"');
+        }
+        final split = (c.args['split'] ?? '').toString();
+        // Wire usa a geometria (right|down), não os nomes do SplitDir — o
+        // enum é contra-intuitivo (vertical = lado a lado).
+        final SplitDir? splitDir;
+        switch (split) {
+          case '':
+            splitDir = null;
+          case 'right':
+            splitDir = SplitDir.vertical;
+          case 'down':
+            splitDir = SplitDir.horizontal;
+          default:
+            return FlightDeckCommandResult.fail(
+              'invalid split "$split" (expected right or down)',
+            );
+        }
+        final title = (c.args['title'] ?? '').toString();
+        final sender = c.tabId == null ? null : _vm.session(c.tabId!);
+        String? anchorLeaf;
+        if (sender != null) {
+          if (sender.projectId != _vm.selectedProjectId) {
+            _vm.selectProject(sender.projectId);
+          }
+          anchorLeaf = _vm.leafOfTab(sender.projectId, sender.id);
+        }
+        final created = _vm.newTerminalTab(
+          cwd: cwd,
+          title: title.isEmpty ? null : title,
+          inPane: anchorLeaf,
+          splitDir: splitDir,
+        );
+        return switch (created) {
+          Success(:final value) => FlightDeckCommandResult.ok({'tabId': value}),
+          Failure(:final error) => FlightDeckCommandResult.fail(error),
+        };
+
+      // `flightdeck close-tab [<label|tab-id>]` — fecha uma aba (a contraparte do
+      // `new-tab`). Sem alvo, fecha a PRÓPRIA aba emissora.
+      //
+      // Mesma semântica do "x" da UI (`closeTab`): a última aba de uma folha
+      // remove a folha; a última folha do workspace vira uma aba vazia.
+      case 'close-tab':
+        final target = (c.args['target'] ?? '').toString();
+        final PaneItem? s;
+        if (target.isNotEmpty) {
+          final resolved = _resolvePaneTarget(target);
+          if (resolved case Failure(:final error)) {
+            return FlightDeckCommandResult.fail(error);
+          }
+          s = (resolved as Success<PaneItem, String>).value;
+        } else {
+          final id = c.tabId;
+          if (id == null || id.isEmpty) {
+            return const FlightDeckCommandResult.fail(
+              'missing target (pass <label|tab-id> or run inside a FlightDeck '
+              'terminal)',
+            );
+          }
+          s = _vm.session(id);
+          if (s == null) {
+            return FlightDeckCommandResult.fail('tab "$id" does not exist');
+          }
+        }
+        // `closeTab` opera sobre o workspace ATIVO (lê `_activeTree`), então
+        // fechar aba de outro workspace exige trazê-lo pra frente antes —
+        // mesma regra do `open`/`new-tab`.
+        if (s.projectId != _vm.selectedProjectId) {
+          _vm.selectProject(s.projectId);
+        }
+        final leaf = _vm.leafOfTab(s.projectId, s.id);
+        if (leaf == null) {
+          return FlightDeckCommandResult.fail(
+            'tab "${s.id}" is not in any pane (already closed?)',
+          );
+        }
+        // O fechamento roda DEPOIS da resposta (`afterResponse`): fechar a
+        // própria aba emissora mata o PTY — e com ele o shell e o processo
+        // `flightdeck` que espera o `ok` neste socket. Fechando aqui, o sucesso
+        // viraria erro de transporte na tela. Tudo que pode falhar (resolver
+        // alvo, achar a folha) já foi validado acima, então nada de erro se
+        // perde no adiamento.
+        final closingLeaf = leaf;
+        final closingId = s.id;
+        return FlightDeckCommandResult.ok({
+          'tabId': s.id,
+        }, () => _vm.closeTab(closingLeaf, closingId));
+
+      // `flightdeck rename-tab [<label|tab-id>] <new-name>` — define o rótulo
+      // manual da aba e atualiza a UI do FlightDeck imediatamente. Sem alvo,
+      // renomeia a aba emissora.
+      case 'rename-tab':
+        final target = (c.args['target'] ?? '').toString();
+        final rawLabel = (c.args['name'] ?? c.args['label'] ?? '')
+            .toString()
+            .trim();
+        if (rawLabel.isEmpty) {
+          return const FlightDeckCommandResult.fail('missing label/name');
+        }
+        final PaneItem? s;
+        if (target.isNotEmpty) {
+          final resolved = _resolvePaneTarget(target);
+          if (resolved case Failure(:final error)) {
+            return FlightDeckCommandResult.fail(error);
+          }
+          s = (resolved as Success<PaneItem, String>).value;
+        } else {
+          final id = c.tabId;
+          if (id == null || id.isEmpty) {
+            return const FlightDeckCommandResult.fail(
+              'missing target (pass <label|tab-id> or run inside a FlightDeck terminal)',
+            );
+          }
+          s = _vm.session(id);
+          if (s == null) {
+            return FlightDeckCommandResult.fail('tab "$id" does not exist');
+          }
+        }
+        _vm.setPaneLabel(s.id, rawLabel);
+        return FlightDeckCommandResult.ok({'tabId': s.id, 'label': rawLabel});
+
+      // `flightdeck orchestrate <file.ckp>` — aplica um layout de panes no
+      // workspace ativo. A CLI já resolveu o path pro absoluto. Merge
+      // idempotente (tab de mesmo nome = pulada); devolve {created, skipped}.
+      // `flightdeck note add <dir.notebook> --title T [--tag a]... [--body ...]`
+      // Cria a nota com frontmatter certo (tag `agent` sempre entra — é a
+      // marca de nota escrita por agente) e recarrega a aba do caderno se
+      // estiver aberta. Devolve `{path}`. A pasta é criada se faltar.
+      case 'note-add':
+        {
+          final dir = (c.args['notebook'] ?? '').toString();
+          if (dir.isEmpty || !isNotebookFolder(dir)) {
+            return const FlightDeckCommandResult.fail(
+              'notebook must be a folder ending in .notebook',
+            );
+          }
+          final title = (c.args['title'] ?? '').toString().trim();
+          if (title.isEmpty) {
+            return const FlightDeckCommandResult.fail('missing --title');
+          }
+          final rawTags = c.args['tags'];
+          final tags = <String>{
+            if (rawTags is List) ...rawTags.map((e) => e.toString()),
+            kAgentTag,
+          }.toList();
+          final body = (c.args['body'] ?? '').toString();
+          if (!_isRemoteTab(c.tabId)) {
+            try {
+              await Directory(dir).create(recursive: true);
+            } on FileSystemException catch (e) {
+              return FlightDeckCommandResult.fail(
+                'cannot create "$dir": ${e.message}',
+              );
+            }
+          }
+          final now = DateTime.now();
+          var name = NotebookNote.fileNameFor(title, now);
+          final taken = (await _vm.listChildren(
+            dir,
+          )).map((e) => e.name).toSet();
+          var i = 2;
+          while (taken.contains(name)) {
+            name = NotebookNote.fileNameFor('$title $i', now);
+            i++;
+          }
+          final path = '$dir/$name';
+          final ok = await _vm.writeTextAt(
+            path,
+            NotebookNote.template(
+              title: title,
+              tags: tags,
+              now: now,
+              body: body,
+            ),
+          );
+          if (!ok) return FlightDeckCommandResult.fail('could not write "$path"');
+          _vm.notebookSessionFor(dir)?.requestReload();
+          return FlightDeckCommandResult.ok({'path': path});
+        }
+
+      // `flightdeck note list <dir.notebook>` — notas com título e tags.
+      case 'note-list':
+        {
+          final dir = (c.args['notebook'] ?? '').toString();
+          if (dir.isEmpty || !isNotebookFolder(dir)) {
+            return const FlightDeckCommandResult.fail(
+              'notebook must be a folder ending in .notebook',
+            );
+          }
+          final out = <Map<String, dynamic>>[];
+          for (final e in await _vm.listChildren(dir)) {
+            if (e.isDirectory || !e.name.toLowerCase().endsWith('.md'))
+              continue;
+            final raw = await _vm.readTextAt(e.path);
+            if (raw == null) continue;
+            final n = NotebookNote.parse(e.path, raw);
+            out.add({'path': n.path, 'title': n.title, 'tags': n.tags});
+          }
+          return FlightDeckCommandResult.ok(out);
+        }
+
+      case 'orchestrate':
+        final path = (c.args['path'] ?? '').toString();
+        if (path.isEmpty) {
+          return const FlightDeckCommandResult.fail('missing path');
+        }
+        final sender = c.tabId == null ? null : _vm.session(c.tabId!);
+        if (sender != null && sender.projectId != _vm.selectedProjectId) {
+          _vm.selectProject(sender.projectId);
+        }
+        final applied = await _vm.applyLayoutFile(path);
+        return switch (applied) {
+          Success(:final value) => FlightDeckCommandResult.ok({
+            'created': value.created,
+            'skipped': value.skipped,
+          }),
+          Failure(:final error) => FlightDeckCommandResult.fail(error),
+        };
+
+      case 'list-workspaces':
+        final ws = _vm.projects
+            .map(
+              (p) => <String, dynamic>{
+                'id': p.id,
+                'name': p.name,
+                // Raiz do workspace na máquina onde ele vive (mesma razão do
+                // `workspacePath` do list-panes: o `id` virou UUID opaco; antes
+                // o path ERA o id). Num workspace remoto é a pasta do HOST —
+                // reportar o `path` cru mostrava '' e sugeria "sem pasta".
+                'path': p.effectiveRoot,
+                // Nº de tabs (sessões) abertas nesse workspace. Campo era 'panes'
+                // (enganoso — sempre foi contagem de tabs, não de folhas-pane).
+                'tabs': _vm.allSessions
+                    .where((s) => s.projectId == p.id)
+                    .length,
+              },
+            )
+            .toList();
+        return FlightDeckCommandResult.ok(ws);
+
+      // `flightdeck new-workspace <path> [--host <host>] [--name <name>]`
+      // `flightdeck new-remote-workspace --host <host> --path <path> [--name <name>]`
+      // Adiciona um workspace como projeto de primeiro nível no rail (local ou
+      // remoto). Idempotente: se já estiver aberto, seleciona e devolve os
+      // dados do workspace.
+      case 'new-remote-workspace':
+      case 'new-workspace':
+      case 'open-workspace':
+        final hostRef = (c.args['host'] ?? '').toString().trim();
+        final rawPath = (c.args['path'] ?? '').toString().trim();
+        if (rawPath.isEmpty) {
+          return const FlightDeckCommandResult.fail('missing path');
+        }
+        final rawName = (c.args['name'] ?? '').toString().trim();
+        final customName = rawName.isEmpty ? null : rawName;
+
+        if (hostRef.isNotEmpty) {
+          // Workspace REMOTO (plano 58 / dd-swarm):
+          // Resolve host existente (por id/sshTarget/nome) ou registra
+          // automaticamente com o sshTarget (ex: alias do ~/.ssh/config).
+          final host = await _resolveOrRegisterRemoteHost(hostRef);
+          final cleanPath = await _resolveRemotePath(host, rawPath);
+          final workspaceId = await _vm.createRemoteWorkspace(
+            host.id,
+            cleanPath,
+            name: customName,
+          );
+
+          final sessions = _vm.allSessions
+              .where((s) => s.projectId == workspaceId)
+              .toList();
+          if (sessions.isEmpty ||
+              sessions.every(
+                (s) => s is AgentSession && s.status == AgentStatus.empty,
+              )) {
+            _vm.newTerminalTab(cwd: cleanPath);
+          }
+
+          final project = _vm.projectById(workspaceId);
+          final tabCount = _vm.allSessions
+              .where((s) => s.projectId == workspaceId)
+              .length;
+          return FlightDeckCommandResult.ok({
+            'id': workspaceId,
+            'name': project?.name ?? (customName ?? cleanPath),
+            'path': project?.effectiveRoot ?? cleanPath,
+            'host': host.sshTarget,
+            'tabs': tabCount,
+          });
+        }
+
+        // Workspace LOCAL
+        final cleanPath = _cleanWorkspacePath(rawPath);
+        if (!_isRemoteTab(c.tabId) && !await Directory(cleanPath).exists()) {
+          return FlightDeckCommandResult.fail('directory not found: "$cleanPath"');
+        }
+
+        final project = await _vm.addProject(cleanPath, name: customName);
+        _vm.selectProject(project.id);
+
+        if (customName != null && customName != project.name) {
+          await _vm.updateProject(project.id, name: customName);
+        }
+
+        final sessions = _vm.allSessions
+            .where((s) => s.projectId == project.id)
+            .toList();
+        if (sessions.isEmpty ||
+            sessions.every(
+              (s) => s is AgentSession && s.status == AgentStatus.empty,
+            )) {
+          _vm.newTerminalTab(cwd: project.effectiveRoot);
+        }
+
+        final resolved = _vm.projectById(project.id) ?? project;
+        final tabCount = _vm.allSessions
+            .where((s) => s.projectId == resolved.id)
+            .length;
+
+        return FlightDeckCommandResult.ok({
+          'id': resolved.id,
+          'name': resolved.name,
+          'path': resolved.effectiveRoot,
+          'tabs': tabCount,
+        });
+
+      // `flightdeck close-workspace [<id|path>]` — fecha/remove o workspace do
+      // FlightDeck (mantém os arquivos no disco). Suporta workspaces locais e remotos.
+      // O encerramento roda em `afterResponse` para permitir que o socket
+      // responda antes de derrubar o PTY/shell caso o comando venha de dentro
+      // do workspace fechado.
+      case 'close-workspace':
+        final target = (c.args['target'] ?? '').toString().trim();
+        final Project? project;
+        if (target.isNotEmpty) {
+          project = _resolveWorkspace(target);
+          if (project == null) {
+            return FlightDeckCommandResult.fail('no workspace matches "$target"');
+          }
+        } else {
+          final sender = c.tabId == null ? null : _vm.session(c.tabId!);
+          project = sender != null
+              ? _vm.projectById(sender.projectId)
+              : _vm.selectedProject;
+          if (project == null) {
+            return const FlightDeckCommandResult.fail(
+              'missing target workspace (pass <id|path> or run inside a FlightDeck workspace)',
+            );
+          }
+        }
+        if (project.isSystemTerminal) {
+          return const FlightDeckCommandResult.fail(
+            'cannot close the system terminal workspace',
+          );
+        }
+        final isRemote = project.isRemoteTerminal;
+        final closingId = project.id;
+        final closingPath = project.effectiveRoot;
+        return FlightDeckCommandResult.ok(
+          {'id': closingId, 'path': closingPath, 'closed': true},
+          () {
+            if (isRemote) {
+              unawaited(_vm.removeRemoteWorkspace(closingId));
+            } else {
+              unawaited(_vm.removeProject(closingId));
+            }
+          },
+        );
+
+      // `flightdeck rename-workspace [<id|path>] <new-name>` — renomeia o título
+      // de exibição do workspace no rail (local ou remoto).
+      case 'rename-workspace':
+        final target = (c.args['target'] ?? '').toString().trim();
+        final newName = (c.args['name'] ?? '').toString().trim();
+        if (newName.isEmpty) {
+          return const FlightDeckCommandResult.fail('missing new workspace name');
+        }
+        final Project? project;
+        if (target.isNotEmpty) {
+          project = _resolveWorkspace(target);
+          if (project == null) {
+            return FlightDeckCommandResult.fail('no workspace matches "$target"');
+          }
+        } else {
+          final sender = c.tabId == null ? null : _vm.session(c.tabId!);
+          project = sender != null
+              ? _vm.projectById(sender.projectId)
+              : _vm.selectedProject;
+          if (project == null) {
+            return const FlightDeckCommandResult.fail(
+              'missing target workspace (pass <id|path> or run inside a FlightDeck workspace)',
+            );
+          }
+        }
+        if (project.isSystemTerminal) {
+          return const FlightDeckCommandResult.fail(
+            'cannot rename the system terminal workspace',
+          );
+        }
+        if (project.isRemoteTerminal) {
+          await _vm.updateRemoteWorkspace(project.id, name: newName);
+        } else {
+          await _vm.updateProject(project.id, name: newName);
+        }
+        final renamed = _vm.projectById(project.id) ?? project;
+        return FlightDeckCommandResult.ok({
+          'id': renamed.id,
+          'name': renamed.name,
+          'path': renamed.effectiveRoot,
+        });
+
+      // `flightdeck read-pane [<label|tab-id>]` — devolve uma janela de linhas do
+      // buffer renderizado do pane (texto plano, sem ANSI — é o que o xterm já
+      // pintou). Args: `lines` (default 100), `offset` (pula N a partir da
+      // âncora), `fromStart` (âncora no começo; default = fim/tail). A ordem
+      // das linhas é sempre cronológica — as flags só escolhem a janela.
+      case 'read-pane':
+        final target = (c.args['target'] ?? '').toString();
+        final PaneItem? s;
+        if (target.isNotEmpty) {
+          final resolved = _resolvePaneTarget(target);
+          if (resolved case Failure(:final error)) {
+            return FlightDeckCommandResult.fail(error);
+          }
+          s = (resolved as Success<PaneItem, String>).value;
+        } else {
+          final id = c.tabId;
+          if (id == null || id.isEmpty) {
+            return const FlightDeckCommandResult.fail(
+              'missing target (pass <label|tab-id> or run inside a FlightDeck '
+              'terminal)',
+            );
+          }
+          s = _vm.session(id);
+          if (s == null) {
+            return FlightDeckCommandResult.fail('tab "$id" does not exist');
+          }
+        }
+        final term = switch (s) {
+          TerminalSession t => t.terminal,
+          TaskOutputSession t => t.terminal,
+          _ => null,
+        };
+        if (term == null) {
+          return FlightDeckCommandResult.fail(
+            'tab "${s.id}" (${_paneKind(s)}) has no readable output',
+          );
+        }
+        return FlightDeckCommandResult.ok(readTerminalWindow(term, c.args));
+
+      // `flightdeck list-tasks` — tasks do workspace do pane emissor (tabId,
+      // default da CLI = a própria tab; fallback: workspace selecionado).
+      // Mesmos binds do painel Tasks → mesma lista que a UI. `id` é o aceito
+      // por `read-task`; `hasOutput` diz se o read vai responder.
+      case 'list-tasks':
+        final sender = c.tabId == null ? null : _vm.session(c.tabId!);
+        final project = sender != null
+            ? _vm.projectById(sender.projectId)
+            : _vm.selectedProject;
+        final tasksRoot = project?.effectiveRoot ?? '';
+        if (project == null || project.isSystemTerminal || tasksRoot.isEmpty) {
+          return const FlightDeckCommandResult.fail(
+            'no workspace to list tasks for',
+          );
+        }
+        final defs = await _tasks.discover(tasksRoot);
+        final tasks = defs
+            .map(
+              (d) => <String, dynamic>{
+                'id': d.id,
+                'label': d.label,
+                'kind': d.kind.name,
+                'source': d.source.name,
+                'running': _taskRuns.runOf(d.id).isActive,
+                'hasOutput': _taskTerms.existingTerminal(d.id) != null,
+              },
+            )
+            .toList();
+        return FlightDeckCommandResult.ok(tasks);
+
+      // `flightdeck read-task <task-id>` — mesma leitura, mas do terminal da task
+      // no `TaskTerminalStore` (funciona mesmo sem aba `task_output` aberta).
+      case 'read-task':
+        final taskId = (c.args['target'] ?? '').toString();
+        if (taskId.isEmpty) {
+          return const FlightDeckCommandResult.fail('missing task id');
+        }
+        final term = _taskTerms.existingTerminal(taskId);
+        if (term == null) {
+          return FlightDeckCommandResult.fail(
+            'no output recorded for task "$taskId" (never ran this boot?)',
+          );
+        }
+        return FlightDeckCommandResult.ok(readTerminalWindow(term, c.args));
+
+      // ── `flightdeck db …` (plano 51) — acesso a banco pros agentes. A CLI é
+      // cliente magro: quem executa é o app (mesmo motor da tab `.dbq`), e a
+      // credencial nunca sai daqui. Workspace do pane emissor; `--workspace
+      // <id|path>` pra uso fora de pane. Erros de banco voltam como
+      // `<kind>: <message>` (a CLI reconstrói o JSON `{"error":{…}}`).
+      case 'db-list':
+        return _dbCommand(c, (project, root) async {
+          final conns = await _db.connections(root, workspaceId: project.id);
+          return FlightDeckCommandResult.ok([
+            // `agents: false` = invisível pros agentes (a GUI segue vendo).
+            for (final conn in conns)
+              if (conn.agents)
+                {
+                  'name': conn.name,
+                  'engine': conn.engine.label,
+                  'target': conn.displayTarget,
+                  'origin': conn.origin.name,
+                  'access': conn.access.name,
+                },
+          ]);
+        });
+
+      case 'db-schema':
+        return _dbCommand(c, (project, root) async {
+          final (conn, connErr) = await _agentConn(
+            project,
+            (c.args['db'] ?? '').toString(),
+          );
+          if (connErr != null) return FlightDeckCommandResult.fail(connErr);
+          final table = (c.args['table'] ?? '').toString();
+          final result = await _db.schema(
+            workspaceRoot: root,
+            workspaceId: project.id,
+            connName: conn!.name,
+            table: table.isEmpty ? null : table,
+          );
+          return FlightDeckCommandResult.ok(result.toJson());
+        });
+
+      case 'db-query':
+      case 'db-execute':
+        return _dbCommand(c, (project, root) async {
+          final (conn, connErr) = await _agentConn(
+            project,
+            (c.args['db'] ?? '').toString(),
+          );
+          if (connErr != null) return FlightDeckCommandResult.fail(connErr);
+          final sql = (c.args['sql'] ?? '').toString();
+          // Guardrail (conexão `read`): execute é recusado de cara; query
+          // passa pelo gate de statement (SELECT-like apenas).
+          if (conn!.access == DbAccess.read) {
+            if (c.cmd == 'db-execute') {
+              return const FlightDeckCommandResult.fail(
+                'read_only_connection: this connection is read-only for '
+                'agents — enable Read & write on it in the Database panel',
+              );
+            }
+            final violation = sqlReadViolation(sql);
+            if (violation != null) return FlightDeckCommandResult.fail(violation);
+          }
+          final result = await _db.query(
+            workspaceRoot: root,
+            workspaceId: project.id,
+            connName: conn.name,
+            sql: sql,
+            limit: int.tryParse('${c.args['limit'] ?? ''}'),
+            dml: c.cmd == 'db-execute',
+          );
+          return FlightDeckCommandResult.ok(result.toJson());
+        });
+
+      // `flightdeck db run <file.dbq>` — executa o arquivo (frontmatter decide
+      // conexão e limite). O path chega absoluto (a CLI resolve contra o cwd).
+      case 'db-run':
+        return _dbCommand(c, (project, root) async {
+          final path = (c.args['path'] ?? '').toString();
+          if (path.isEmpty) {
+            return const FlightDeckCommandResult.fail('missing .dbq path');
+          }
+          final String content;
+          try {
+            content = await File(path).readAsString();
+          } on FileSystemException catch (e) {
+            return FlightDeckCommandResult.fail(
+              'cannot read "$path": ${e.message}',
+            );
+          }
+          final doc = DbqDocument.parse(content);
+          if (doc.db == null) {
+            return FlightDeckCommandResult.fail(
+              'unknown_connection: "$path" has no "-- db:" frontmatter — '
+              'pick a database in the FlightDeck tab or add the line manually',
+            );
+          }
+          final (conn, connErr) = await _agentConn(project, doc.db!);
+          if (connErr != null) return FlightDeckCommandResult.fail(connErr);
+          final statements = [
+            for (final st in splitSqlStatements(doc.sql)) st.text,
+          ];
+          // Conexão `read`: cada statement do script passa pelo gate.
+          if (conn!.access == DbAccess.read) {
+            for (final st in statements) {
+              final violation = sqlReadViolation(st);
+              if (violation != null) {
+                return FlightDeckCommandResult.fail(violation);
+              }
+            }
+          }
+          // Mesma semântica de script da tab: statements em sequência,
+          // resultado do último.
+          final result = await _db.runStatements(
+            workspaceRoot: root,
+            workspaceId: project.id,
+            connName: conn.name,
+            statements: statements,
+            limit: doc.limit,
+          );
+          return FlightDeckCommandResult.ok(result.toJson());
+        });
+
+      // ── `flightdeck http …` — dispara requests de um arquivo `.http` pros
+      // agentes. Mesmo motor da tab (`HttpRequestRunner`), mesma saída JSON de
+      // uma linha do `flightdeck db`. Texto em inglês por decisão: a CLI fala com
+      // agentes e scripts, não com a UI.
+      case 'http-list':
+        return _projectCommand(c, (project, root) async {
+          final (doc, err) = await _httpDoc(c);
+          if (err != null) return FlightDeckCommandResult.fail(err);
+          return FlightDeckCommandResult.ok([
+            for (var i = 0; i < doc!.requests.length; i++)
+              {
+                'index': i,
+                'name': doc.requests[i].name,
+                'method': doc.requests[i].method,
+                'url': doc.requests[i].url,
+              },
+          ]);
+        });
+
+      // `flightdeck http run <file.http> [--request <nome|índice>]` — sem
+      // `--request`, roda o primeiro request do arquivo.
+      case 'http-run':
+        return _projectCommand(c, (project, root) async {
+          final (doc, err) = await _httpDoc(c);
+          if (err != null) return FlightDeckCommandResult.fail(err);
+          if (doc!.requests.isEmpty) {
+            return const FlightDeckCommandResult.fail(
+              'no_request: the file has no request',
+            );
+          }
+          final wanted = (c.args['request'] ?? '').toString();
+          var index = 0;
+          if (wanted.isNotEmpty) {
+            final asIndex = int.tryParse(wanted);
+            if (asIndex != null) {
+              if (asIndex < 0 || asIndex >= doc.requests.length) {
+                return FlightDeckCommandResult.fail(
+                  'no_request: no request at index $asIndex '
+                  '(the file has ${doc.requests.length})',
+                );
+              }
+              index = asIndex;
+            } else {
+              index = doc.requests.indexWhere(
+                (r) => r.name.toLowerCase() == wanted.toLowerCase(),
+              );
+              if (index < 0) {
+                return FlightDeckCommandResult.fail(
+                  'no_request: no request named "$wanted" '
+                  '(see `flightdeck http list`)',
+                );
+              }
+            }
+          }
+          final path = (c.args['path'] ?? '').toString();
+          final timeout = int.tryParse('${c.args['timeout'] ?? ''}');
+          final result = await _http.send(
+            doc.resolveRequest(doc.requests[index]),
+            baseDir: Directory(path).parent.path,
+            timeout: Duration(seconds: timeout ?? 30),
+          );
+          return result.fold(
+            (value) => FlightDeckCommandResult.ok(value.toJson()),
+            (error) => FlightDeckCommandResult.fail(_httpErrorText(error)),
+          );
+        });
+
+      // `flightdeck redis` — comando de cache CLI-only (plano 51). `args.parts`
+      // é a lista do comando (`['GET','foo']`). Reply cru em JSON.
+      case 'redis-cmd':
+        return _dbCommand(c, (project, root) async {
+          final (conn, connErr) = await _agentConn(
+            project,
+            (c.args['db'] ?? '').toString(),
+          );
+          if (connErr != null) return FlightDeckCommandResult.fail(connErr);
+          final parts = [
+            for (final p in (c.args['parts'] as List? ?? const [])) '$p',
+          ];
+          if (conn!.access == DbAccess.read) {
+            final violation = redisReadViolation(parts);
+            if (violation != null) return FlightDeckCommandResult.fail(violation);
+          }
+          final reply = await _db.redisCommand(
+            workspaceRoot: root,
+            workspaceId: project.id,
+            connName: conn.name,
+            parts: parts,
+          );
+          return FlightDeckCommandResult.ok(reply);
+        });
+
+      // `flightdeck mongo` — CLI-only: `args.command` é o JSON do runCommand.
+      case 'mongo-cmd':
+        return _dbCommand(c, (project, root) async {
+          final raw = (c.args['command'] ?? '{}').toString();
+          final Map<String, dynamic> command;
+          try {
+            command = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+          } catch (_) {
+            return const FlightDeckCommandResult.fail(
+              'query_failed: invalid JSON command',
+            );
+          }
+          final (conn, connErr) = await _agentConn(
+            project,
+            (c.args['db'] ?? '').toString(),
+          );
+          if (connErr != null) return FlightDeckCommandResult.fail(connErr);
+          if (conn!.access == DbAccess.read) {
+            final violation = mongoReadViolation(command);
+            if (violation != null) return FlightDeckCommandResult.fail(violation);
+          }
+          var database = (c.args['database'] ?? '').toString().trim();
+          // Comando que só roda no `admin` (listDatabases) é roteado pra lá —
+          // é o comando de descoberta do agente e falharia com `Unauthorized`
+          // contra qualquer outra base. Mesma regra do seletor do painel.
+          if (database.isEmpty) {
+            database = mongoForcedDatabase(command) ?? '';
+          }
+          final dbErr = await _mongoDatabaseError(project, conn, database);
+          if (dbErr != null) return FlightDeckCommandResult.fail(dbErr);
+          final reply = await _db.mongoCommand(
+            workspaceRoot: root,
+            workspaceId: project.id,
+            connName: conn.name,
+            command: command,
+            database: database.isEmpty ? null : database,
+          );
+          return FlightDeckCommandResult.ok(reply);
+        });
+
+      // `flightdeck redis browse` / `flightdeck mongo browse` (plano 53, decisão D):
+      // o agente abre a view filtrada pro humano. Abrir view ≠ executar — não
+      // devolve dados; valida filtro/conexão ANTES de abrir.
+      case 'browse':
+        return _dbCommand(c, (project, root) async {
+          final raw = (c.args['url'] ?? '').toString();
+          if (raw.isEmpty) {
+            return const FlightDeckCommandResult.fail('missing url');
+          }
+          final url = normalizeBrowserUrl(raw);
+          // Sem webview inline (Linux): browser do SO, e o JSON diz isso.
+          if (!BrowserCapability.resolve().isInline) {
+            final ok = await _vm.openUrlExternally(url);
+            if (!ok) {
+              return FlightDeckCommandResult.fail('could not open "$url"');
+            }
+            return FlightDeckCommandResult.ok({'mode': 'system', 'url': url});
+          }
+          final session = _vm.openWebBrowser(
+            url,
+            projectId: project.id,
+            reuse: true,
+          );
+          if (session == null) {
+            return const FlightDeckCommandResult.fail(
+              'workspace has no open pane to attach the browser to',
+            );
+          }
+          return FlightDeckCommandResult.ok({'mode': 'inline', 'url': url});
+        });
+
+      case 'redis-browse':
+        return _dbCommand(c, (project, root) async {
+          final connName = (c.args['db'] ?? '').toString();
+          final err = await _checkBrowseConn(project, connName, DbEngine.redis);
+          if (err != null) return FlightDeckCommandResult.fail(err);
+          final ok = _vm.openRedisBrowser(
+            connName,
+            projectId: project.id,
+            pattern: (c.args['pattern'] ?? '').toString(),
+          );
+          if (!ok) {
+            return const FlightDeckCommandResult.fail(
+              'workspace has no open pane to attach the browser to',
+            );
+          }
+          return FlightDeckCommandResult.ok({'opened': 'redis', 'db': connName});
+        });
+
+      case 'mongo-browse':
+        return _dbCommand(c, (project, root) async {
+          final connName = (c.args['db'] ?? '').toString();
+          final collection = (c.args['collection'] ?? '').toString();
+          if (collection.isEmpty) {
+            return const FlightDeckCommandResult.fail('missing <collection>');
+          }
+          final err = await _checkBrowseConn(project, connName, DbEngine.mongo);
+          if (err != null) return FlightDeckCommandResult.fail(err);
+          final filter = (c.args['filter'] ?? '').toString();
+          // Valida o JSON aqui — nunca abrir a tab com filtro quebrado.
+          MongoBrowseService.parseFilter(filter);
+          // Diferente do `mongo-cmd`: aqui o `--database` **fixa** a base da
+          // conexão. A tab é o que o humano passa a ver, e ela resolve o alvo
+          // pela conexão — abrir uma view apontando pra outra base seria mentira.
+          final (conn, _) = await _agentConn(project, connName);
+          final database = (c.args['database'] ?? '').toString().trim();
+          if (conn != null) {
+            final dbErr = await _mongoDatabaseError(project, conn, database);
+            if (dbErr != null) return FlightDeckCommandResult.fail(dbErr);
+            if (database.isNotEmpty) {
+              await _db.selectMongoDatabase(project.id, conn.name, database);
+            }
+          }
+          final ok = _vm.openMongoBrowser(
+            connName,
+            collection,
+            projectId: project.id,
+            filter: filter,
+          );
+          if (!ok) {
+            return const FlightDeckCommandResult.fail(
+              'workspace has no open pane to attach the browser to',
+            );
+          }
+          return FlightDeckCommandResult.ok({
+            'opened': 'mongo',
+            'db': connName,
+            'collection': collection,
+          });
+        });
+
+      default:
+        return FlightDeckCommandResult.fail('unknown command: "${c.cmd}"');
+    }
+  }
+
+  /// Recusa comandos Mongo que não têm database resolvível, listando o que
+  /// existe. `null` = pode seguir.
+  ///
+  /// Sem isto o runner caía em `admin` e o agente recebia `ok:1` com as
+  /// `system.*` do deployment — resposta que *parece* sucesso e não é. Erro
+  /// explícito é a única saída honesta: URL de Atlas não traz database no path,
+  /// e a seleção do painel pode nunca ter acontecido neste workspace.
+  Future<String?> _mongoDatabaseError(
+    Project project,
+    DbConnection conn,
+    String database,
+  ) async {
+    if (database.isNotEmpty) return null;
+    if (_db.mongoDatabase(project.id, conn) != null) return null;
+    final available = await _mongoDatabaseNames(project, conn);
+    return 'query_failed: connection "${conn.name}" has no database — its URL '
+        'has none in the path and none was picked in the app. Pass '
+        '--database <name>${available.isEmpty ? '' : ' (available: '
+                  '${available.join(', ')})'}.';
+  }
+
+  /// Databases do deployment, pro texto do erro acima. Falha vira lista vazia:
+  /// a mensagem principal continua valendo sem eles.
+  Future<List<String>> _mongoDatabaseNames(
+    Project project,
+    DbConnection conn,
+  ) async {
+    try {
+      final svc = MongoBrowseService(_db)
+        ..target(
+          workspaceRoot: project.effectiveRoot,
+          workspaceId: project.id,
+          connName: conn.name,
+        );
+      return await svc.listDatabases();
+    } on Object {
+      return const [];
+    }
+  }
+
+  /// Resolve a conexão [connName] pro caminho **dos agentes**: conexões com
+  /// `agents: false` são tratadas como inexistentes (nem o nome vaza — a
+  /// lista de disponíveis também as omite). Devolve (conexão, null) ou
+  /// (null, mensagem de erro).
+  Future<(DbConnection?, String?)> _agentConn(
+    Project project,
+    String connName,
+  ) async {
+    if (connName.isEmpty) return (null, 'missing --db <name>');
+    final conns = [
+      for (final c in await _db.connections(
+        project.effectiveRoot,
+        workspaceId: project.id,
+      ))
+        if (c.agents) c,
+    ];
+    for (final conn in conns) {
+      if (conn.name == connName) return (conn, null);
+    }
+    final available = conns.map((c) => c.name).join(', ');
+    return (
+      null,
+      'no connection named "$connName" '
+          '(available: ${available.isEmpty ? 'none' : available})',
+    );
+  }
+
+  /// Valida a conexão alvo de um `browse`: visível pra agentes e do [engine]
+  /// esperado. `null` = ok; senão a mensagem de erro.
+  Future<String?> _checkBrowseConn(
+    Project project,
+    String connName,
+    DbEngine engine,
+  ) async {
+    final (conn, err) = await _agentConn(project, connName);
+    if (err != null) return err;
+    return conn!.engine == engine
+        ? null
+        : '"$connName" is a ${conn.engine.label} connection, '
+              'not ${engine.label}';
+  }
+
+  /// Molde dos comandos `db-*`: resolve o workspace (decisão K do plano 51 —
+  /// `--workspace <id|path>` > pane emissor > erro, **nunca** cwd nem chute) e
+  /// converte [DbQueryException] em `fail("<kind>: <mensagem>")`.
+  /// `true` se a aba emissora pertence a um workspace de host remoto — aí os
+  /// caminhos que chegam pela CLI são do host, não deste computador.
+  bool _isRemoteTab(String? tabId) {
+    if (tabId == null || tabId.isEmpty) return false;
+    final session = _vm.session(tabId);
+    if (session == null) return false;
+    return _vm.projectById(session.projectId)?.isRemoteTerminal ?? false;
+  }
+
+  /// Lê e parseia o `.http` de `args['path']` (absoluto — a CLI resolve
+  /// contra o cwd). Devolve `(doc, null)` ou `(null, erro em inglês)`.
+  Future<(HttpDocument?, String?)> _httpDoc(FlightDeckCommand c) async {
+    final path = (c.args['path'] ?? '').toString();
+    if (path.isEmpty) return (null, 'missing .http path');
+    try {
+      return (HttpDocument.parse(await File(path).readAsString()), null);
+    } on FileSystemException catch (e) {
+      return (null, 'cannot read "$path": ${e.message}');
+    }
+  }
+
+  /// Erro de request no formato `<kind>: <mensagem>` que a CLI reconstrói em
+  /// `{"error":{kind,message}}`. Em inglês por decisão (saída de CLI não é
+  /// traduzida); a UI usa `httpRequestErrorMessage`, que traduz.
+  static String _httpErrorText(HttpRequestError e) {
+    final detail = e.detail?.trim() ?? '';
+    return switch (e.kind) {
+      HttpRequestErrorKind.noRequest => 'no_request: no request found',
+      HttpRequestErrorKind.invalidUrl =>
+        'invalid_url: "$detail" is not a '
+            'valid absolute URL',
+      HttpRequestErrorKind.unresolvedVariable =>
+        'unresolved_variable: {{${e.variable}}} has no value — declare it '
+            'with @${e.variable} = … in the file',
+      HttpRequestErrorKind.bodyFileUnreadable =>
+        'body_file_unreadable: cannot read "${e.path}"'
+            '${detail.isEmpty ? '' : ': $detail'}',
+      HttpRequestErrorKind.connectionFailed =>
+        'connection_failed: ${detail.isEmpty ? 'could not reach the server' : detail}',
+      HttpRequestErrorKind.timeout =>
+        'timeout: no response after ${e.timeoutSeconds}s',
+      HttpRequestErrorKind.responseTooLarge =>
+        'response_too_large: over the ${e.limitBytes} byte limit',
+    };
+  }
+
+  /// Resolve o workspace do comando (`--workspace <id|path>`, ou o do pane
+  /// emissor) e roda [action] nele. Compartilhado por `db`/`redis`/`mongo` e
+  /// `http` — todos precisam de uma pasta de workspace real.
+  /// Resolve o workspace do comando e entrega a **raiz efetiva** junto.
+  ///
+  /// A raiz vem pronta (e não `project.path`) porque num workspace remoto o
+  /// `path` é vazio — a pasta vive em `remotePath`. Enquanto cada caso lia
+  /// `project.path` por conta própria, toda aba remota recebia "this pane has
+  /// no workspace folder" em `db`, `list-tasks` e `read-task`; e agentes
+  /// contornavam apontando `--workspace` para um workspace local, o que troca
+  /// a MÁQUINA em silêncio e responde sobre o computador errado.
+  Future<FlightDeckCommandResult> _projectCommand(
+    FlightDeckCommand c,
+    Future<FlightDeckCommandResult> Function(Project project, String root) action,
+  ) async {
+    Project? project;
+    final ws = (c.args['workspace'] ?? '').toString();
+    if (ws.isNotEmpty) {
+      for (final p in _vm.projects) {
+        if (p.id == ws || p.path == ws) {
+          project = p;
+          break;
+        }
+      }
+      if (project == null) {
+        return FlightDeckCommandResult.fail('no workspace matches "$ws"');
+      }
+    } else {
+      final sender = c.tabId == null ? null : _vm.session(c.tabId!);
+      project = sender == null ? null : _vm.projectById(sender.projectId);
+      if (project == null) {
+        return const FlightDeckCommandResult.fail(
+          'not inside a FlightDeck pane — pass --workspace <id|path> '
+          '(see `flightdeck list-workspaces`)',
+        );
+      }
+    }
+    final root = project.effectiveRoot;
+    if (project.isSystemTerminal || root.isEmpty) {
+      return const FlightDeckCommandResult.fail(
+        'this pane has no workspace folder',
+      );
+    }
+    final result = await action(project, root);
+    final crossing = _machineWarning(c, project);
+    // Só decora o sucesso: um erro já traz a explicação dele.
+    if (crossing == null || !result.ok) return result;
+    return FlightDeckCommandResult.ok(result.data, result.afterResponse, crossing);
+  }
+
+  /// Aviso quando `--workspace` mira um workspace de OUTRA máquina que não a da
+  /// aba emissora.
+  ///
+  /// A execução sempre acontece onde o workspace vive — essa parte está certa.
+  /// O problema é o silêncio: um agente numa aba do host, ao apontar para um
+  /// workspace local, recebe de volta o estado da máquina do CLIENTE com toda a
+  /// cara de ser a de onde ele está. Já aconteceu: a resposta descrevia um
+  /// Postgres em `localhost:5433` que rodava no cliente, não no host da aba.
+  String? _machineWarning(FlightDeckCommand c, Project target) {
+    if ((c.args['workspace'] ?? '').toString().isEmpty) return null;
+    final tabId = c.tabId;
+    final sender = tabId == null ? null : _vm.session(tabId);
+    final from = sender == null ? null : _vm.projectById(sender.projectId);
+    if (from == null) return null;
+    final fromHost = from.remoteHostId;
+    final toHost = target.remoteHostId;
+    if (fromHost == toHost) return null;
+    String where(String? hostId) =>
+        hostId == null ? 'this computer' : 'remote host $hostId';
+    return 'ran on ${where(toHost)} — the workspace you targeted with '
+        '--workspace lives there, while this tab runs on ${where(fromHost)}';
+  }
+
+  /// [_projectCommand] + tradução do erro de banco para o formato
+  /// `<kind>: <message>` que a CLI reconstrói em `{"error":{…}}`.
+  Future<FlightDeckCommandResult> _dbCommand(
+    FlightDeckCommand c,
+    Future<FlightDeckCommandResult> Function(Project project, String root) action,
+  ) => _projectCommand(c, (project, root) async {
+    try {
+      return await action(project, root);
+    } on DbQueryException catch (e) {
+      return FlightDeckCommandResult.fail('${e.kind}: ${e.message}');
+    }
+  });
+
+  /// Resolve o alvo de um `read-pane`: primeiro por id exato (`t3`), depois
+  /// por `manualLabel` (case-insensitive). Label ambíguo = erro — nunca chuta
+  /// pane (mesma regra do dispatch de orquestração).
+  Result<PaneItem, String> _resolvePaneTarget(String target) {
+    final byId = _vm.session(target);
+    if (byId != null) return Success(byId);
+    final lower = target.toLowerCase();
+    final byLabel = _vm.allSessions
+        .where((s) => s.manualLabel?.toLowerCase() == lower)
+        .toList();
+    if (byLabel.length == 1) return Success(byLabel.first);
+    if (byLabel.length > 1) {
+      return Failure(
+        'label "$target" is ambiguous (${byLabel.length} tabs) — '
+        'use a tab-id from `flightdeck list-tabs`',
+      );
+    }
+    return Failure(
+      'no tab with id or label "$target" (see `flightdeck list-tabs`)',
+    );
+  }
+
+  Future<String> _resolveRemotePath(RemoteHost host, String rawPath) async {
+    var p = rawPath.trim();
+    if (p == '~' || p.startsWith('~/')) {
+      try {
+        final (code, out, _) = await SshTunnel.capture(
+          host.sshTarget,
+          r'printf %s "$HOME"',
+          port: host.port,
+          identityFile: host.effectiveIdentityFile,
+        );
+        if (code == 0 && out.trim().isNotEmpty) {
+          final remoteHome = out.trim();
+          final normalizedHome = remoteHome.endsWith('/')
+              ? remoteHome.substring(0, remoteHome.length - 1)
+              : remoteHome;
+          p = p == '~' ? normalizedHome : '$normalizedHome/${p.substring(2)}';
+        }
+      } catch (_) {
+        // Fallback: tenta via fileService se capture falhar
+        try {
+          final service = await _vm.remoteHosts.fileServiceFor(host);
+          final remoteHome = await service.home();
+          if (remoteHome.isNotEmpty) {
+            final normalizedHome = remoteHome.endsWith('/')
+                ? remoteHome.substring(0, remoteHome.length - 1)
+                : remoteHome;
+            p = p == '~' ? normalizedHome : '$normalizedHome/${p.substring(2)}';
+          }
+        } catch (_) {}
+      }
+    }
+    while (p.length > 1 && (p.endsWith('/') || p.endsWith(r'\'))) {
+      p = p.substring(0, p.length - 1);
+    }
+    return p;
+  }
+
+  Future<RemoteHost> _resolveOrRegisterRemoteHost(String hostRef) async {
+    final clean = hostRef.trim();
+    for (final h in _vm.remoteHosts.hosts) {
+      if (h.id == clean ||
+          h.sshTarget == clean ||
+          h.name.toLowerCase() == clean.toLowerCase() ||
+          h.host == clean) {
+        return h;
+      }
+    }
+    await _vm.addRemoteHost(name: clean, sshTarget: clean);
+    for (final h in _vm.remoteHosts.hosts) {
+      if (h.sshTarget == clean || h.name == clean) {
+        return h;
+      }
+    }
+    return _vm.remoteHosts.hosts.last;
+  }
+
+  String _cleanWorkspacePath(String path) {
+    var p = normalizePath(path).trim();
+    if (p == '~' || p.startsWith('~/')) {
+      final home =
+          Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+      if (home != null && home.isNotEmpty) {
+        final normHome = normalizePath(home);
+        p = p == '~' ? normHome : '$normHome${p.substring(1)}';
+      }
+    }
+    while (p.length > 1 && p.endsWith('/')) {
+      p = p.substring(0, p.length - 1);
+    }
+    return p;
+  }
+
+  Project? _resolveWorkspace(String target) {
+    if (target.isEmpty) return null;
+    final normalized = normalizePath(target);
+    final clean = _cleanWorkspacePath(target);
+    for (final p in _vm.projects) {
+      if (p.id == target ||
+          p.id == '${Project.remotePrefix}$target' ||
+          p.id.replaceFirst(Project.remotePrefix, '') == target) {
+        return p;
+      }
+      if (p.path == target || p.path == normalized || p.path == clean) return p;
+      if (p.effectiveRoot == target ||
+          p.effectiveRoot == normalized ||
+          p.effectiveRoot == clean) {
+        return p;
+      }
+      if (p.remotePath == target || p.remotePath == clean) return p;
+    }
+    try {
+      final dir = Directory(clean);
+      if (dir.existsSync()) {
+        final abs = _cleanWorkspacePath(dir.absolute.path);
+        for (final p in _vm.projects) {
+          if (p.path == abs || p.effectiveRoot == abs) {
+            return p;
+          }
+        }
+      }
+    } catch (_) {
+      /* ignore invalid path syntax */
+    }
+    final byName = _vm.projects
+        .where((p) => p.name.toLowerCase() == target.toLowerCase())
+        .toList();
+    if (byName.length == 1) return byName.first;
+    return null;
+  }
+
+  String _paneKind(PaneItem s) {
+    if (s is TerminalSession) return 'terminal';
+    if (s is AgentSession) return 'agent';
+    if (s is FileViewerSession) return 'file';
+    if (s is TaskOutputSession) return 'task';
+    if (s is RedisBrowserSession) return 'redis';
+    if (s is MongoBrowserSession) return 'mongo';
+    if (s is NotebookSession) return 'notebook';
+    return 'other';
+  }
+
+  /// Sentinela do `--focused` da CLI. Devolve o comando com o `tabId` real, ou
+  /// `null` quando não há aba em foco pra resolver (aí o chamador falha com
+  /// mensagem clara em vez de escrever numa aba arbitrária).
+  static const String _focusSentinel = '@focused';
+
+  FlightDeckCommand? _resolveFocusSentinel(FlightDeckCommand c) {
+    if (c.tabId != _focusSentinel) return c;
+    final id = _vm.focusedTabId;
+    if (id == null || id.isEmpty) return null;
+    return FlightDeckCommand(cmd: c.cmd, tabId: id, args: c.args);
+  }
+}

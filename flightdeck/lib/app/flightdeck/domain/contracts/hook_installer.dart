@@ -1,0 +1,20 @@
+import 'package:flightdeck/app/core/domain/result.dart';
+
+/// Instala (idempotente) os hooks de ciclo de vida do FlightDeck na configuração
+/// de um harness de agente, e garante que a CLI `flightdeck` (que absorveu o
+/// helper `flightdeck-hook`) esteja num caminho estável. Chamado no boot do app
+/// (decisão: sem passo de onboarding).
+///
+/// O helper, invocado pelo harness a cada evento, manda o status de turno
+/// (working / waiting / idle) pro FlightDeck por socket, roteado pela env
+/// `FLIGHTDECK_PANE_ID` que o app injeta na PTY da aba. A aba reflete no spinner /
+/// badge / chime.
+///
+/// Implementações: `ClaudeHookInstallerImpl` (`~/.claude/settings.json`),
+/// `CodexHookInstallerImpl` (`~/.codex/hooks.json` + trust no `config.toml`) e
+/// `PiHookInstallerImpl` (`~/.pi/agent/extensions/flightdeck.ts`).
+abstract class HookInstaller {
+  /// Garante CLI copiada e entries presentes. Idempotente: re-rodar não duplica
+  /// nem mexe em hooks de terceiros. Falha é não-fatal (logada).
+  Future<Result<void, String>> ensureInstalled();
+}

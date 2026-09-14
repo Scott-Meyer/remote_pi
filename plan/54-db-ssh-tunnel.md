@@ -4,8 +4,8 @@
 
 Conexões de banco em servidor privado normalmente não são acessíveis direto: o
 Postgres/MySQL escuta em `localhost` do host remoto (ou atrás de um bastion) e o
-acesso passa por SSH. Hoje a DB tab do Cockpit (planos 51/52/53) só fala TCP
-direto, então esses bancos simplesmente não entram no `.cockpit/databases.json`.
+acesso passa por SSH. Hoje a DB tab do FlightDeck (planos 51/52/53) só fala TCP
+direto, então esses bancos simplesmente não entram no `.flightdeck/databases.json`.
 
 Este plano adiciona **túnel SSH opcional por conexão** — a conexão continua
 descrita pela URL do banco, e o túnel é um bloco à parte que, quando presente,
@@ -22,12 +22,12 @@ Decidido em conversa 2026-07-27:
 | **E** | **Passphrase**: detecta PEM encriptado ao escolher o arquivo — campo só aparece se necessário. Chave limpa = conexão sem segredo nenhum. Encriptada: "Save passphrase" opt-in → `DbSecrets` (mesmo cofre do SO já usado pelas senhas de banco). Sem salvar: prompt 1× por sessão na GUI, **erro honesto na CLI** (agente não tem como perguntar) |
 | **F** | **`ssh-agent` fora de escopo**: `dartssh2` não fala o protocolo, e implementar exigiria socket Unix (POSIX) + named pipe (Windows, sem suporte no `dart:io`) — quebraria justamente a paridade que motivou a decisão C. Salvar a passphrase no cofre é o substituto equivalente (é o mesmo Keychain que o `ssh-add --apple-use-keychain` usa) |
 | **G** | **Host key por TOFU**: primeira conexão mostra o fingerprint e pede confirmação; guardado em store nosso. Mudança posterior = recusa com aviso alto. Aceitar cego seria MITM silencioso num túnel cuja razão de existir é segurança |
-| **H** | **Segredo nunca no `databases.json`.** O *path* da chave vai (é referência, versionável num repo de time); passphrase vai pro cofre; conteúdo da chave nunca é copiado pra dentro do Cockpit |
+| **H** | **Segredo nunca no `databases.json`.** O *path* da chave vai (é referência, versionável num repo de time); passphrase vai pro cofre; conteúdo da chave nunca é copiado pra dentro do FlightDeck |
 | **J** | **Mongo vai por SOCKS5, os demais por port-forward** (2026-07-27, depois do primeiro uso real). Não é preferência: o driver do Mongo descobre os membros do replica set pelo `hello` e passa a discar os **hostnames que o servidor anuncia** — uma porta local fixa só alcança o primeiro nó, e `mongodb+srv://` nem isso. Com SOCKS quem escolhe o destino é o driver e o túnel só roteia. É o mesmo desenho do MongoDB Compass (`@mongodb-js/ssh-tunnel` é um servidor SOCKS5 sobre `ssh2`, não um `-L`). Usa `SSHClient.forwardDynamic()` do próprio dartssh2 (equivalente a `ssh -D`; NO AUTH + CONNECT, loopback-only) |
 | **K** | **Depende do driver com SOCKS5 habilitado.** A spec dos drivers MongoDB define `proxyHost`/`proxyPort`; no crate Rust `mongodb` isso existe desde a 3.5.0 atrás da feature opcional `socks5-proxy`. **Resolvido em 2026-07-27**: `anaki_mongodb` 0.1.5 publicado com a feature ligada, cross-build `cargo-zigbuild` verde nas 5 plataformas (`fast-socks5` é Rust puro, sem C). Validado pelo Anaki: conexão direta segue funcionando e, contra proxy morto, o erro agora é `error occurred when connecting to a proxy host: Connection refused` — ou seja, a opção é consumida de verdade, não mais recusada pelo parser |
 | **I** | **SQLite não tem túnel** — é path local. Seção some do dialog nesse engine. SQLite remoto (sshfs) é não-objetivo |
 
-## Estrutura esperada (cockpit/)
+## Estrutura esperada (flightdeck/)
 
 - `domain/entities/ssh_tunnel_config.dart` — value object (`host`, `port`,
   `user`, `keyPath`, `savePassphrase`) + `toJson`/`fromJson`
@@ -41,8 +41,8 @@ Decidido em conversa 2026-07-27:
 - `domain/services/db_query_service.dart` — aplicação do túnel no `_resolve`
 - `ui/widgets/db_connection_dialog.dart` — seção inline "SSH Tunnel"
 - `ui/widgets/ssh_host_key_dialog.dart` — confirmação de fingerprint (TOFU)
-- `cockpit_module.dart` — binds novos
-- Docs: `.cockpit/databases.json` na skill `cockpit-cli` + cópia embutida do
+- `flightdeck_module.dart` — binds novos
+- Docs: `.flightdeck/databases.json` na skill `flightdeck-cli` + cópia embutida do
   `install-skill`
 
 ## Passos
@@ -101,9 +101,9 @@ Decidido em conversa 2026-07-27:
    → recusa com aviso explícito de possível MITM, sem opção de aceitar inline.
    Aceite: primeira conexão pede; segunda não; fingerprint trocado recusa.
 
-8. **Docs**. Bloco `ssh` documentado no snippet de `.cockpit/databases.json` da
-   skill `cockpit-cli` (arquivo em `~/.claude/skills/` **e** a cópia embutida no
-   `cockpit_cli.dart`), incluindo a regra de que agente exige passphrase salva.
+8. **Docs**. Bloco `ssh` documentado no snippet de `.flightdeck/databases.json` da
+   skill `flightdeck-cli` (arquivo em `~/.claude/skills/` **e** a cópia embutida no
+   `flightdeck_cli.dart`), incluindo a regra de que agente exige passphrase salva.
 
 ## Não-objetivos
 
@@ -124,18 +124,18 @@ Decidido em conversa 2026-07-27:
 - [x] Host key nova pede confirmação; alterada é recusada
 - [x] Os 6 caminhos do `DbQueryService` funcionam tunelados (SQL + Redis + Mongo)
 - [x] Dialog: criar/editar/limpar túnel; seção ausente no SQLite
-- [x] Skill `cockpit-cli` documenta o bloco `ssh`
+- [x] Skill `flightdeck-cli` documenta o bloco `ssh`
 - [x] `flutter analyze` zero issues; `flutter test` verde
 - [ ] E2E manual: Postgres atrás de bastion, nos três SOs (macOS obrigatório;
       Windows/Linux best-effort na primeira rodada)
 - [x] **anakiORM: feature `socks5-proxy` habilitada** — `anaki_mongodb` 0.1.5
       no pub.dev (2026-07-27), cross-build verde nas 5 plataformas
-- [x] Cockpit bumpado pra `anaki_mongodb` 0.1.5; teste de regressão
+- [x] FlightDeck bumpado pra `anaki_mongodb` 0.1.5; teste de regressão
       (`mongo_socks_support_test`) prova, na **nossa** dylib, que `proxyHost` é
       consumido ("connecting to a proxy host") e não recusado pelo parser
 - [ ] E2E manual: Atlas (`mongodb+srv`) atrás de bastion
 
-Implementado 2026-07-27 (cockpit/). Notas de implementação:
+Implementado 2026-07-27 (flightdeck/). Notas de implementação:
 
 - **Chokepoint confirmado**: a costura são ~3 linhas em `_resolve` +
   `_tunneled()`. Nenhum driver, view, sessão ou handler de CLI foi tocado.

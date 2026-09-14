@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=FlightDeck
+GenericName=Remote Pi FlightDeck
+Comment=Cliente desktop do Remote Pi — GUI multi-pane sobre o motor do Pi
+Exec=flightdeck
+Icon=dev.flightdeck.desktop
+Terminal=false
+Categories=Development;IDE;
+StartupWMClass=dev.flightdeck.desktop
+Keywords=pi;remote-pi;agent;flightdeck;

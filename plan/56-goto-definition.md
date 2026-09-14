@@ -15,12 +15,12 @@ de texto) é independente do semantic highlight.
 **Peças que já existem e este plano reusa, não reinventa**:
 
 1. **Padrão Cmd+clique-pra-abrir-arquivo já existe** —
-   `cockpit_viewmodel.dart:1014` (`openTerminalPath(token, {cwd, line})`),
+   `flightdeck_viewmodel.dart:1014` (`openTerminalPath(token, {cwd, line})`),
    usado pelo terminal (Cmd+clique num caminho de arquivo no output do shell).
    Faz `openFile(abs)` + `session.reveal(line)` — é o mesmo par de chamadas que
    este plano precisa pra abrir a definição.
 2. **Convenção de modificador cross-platform já existe** —
-   `cockpit_page.dart:657-658`:
+   `flightdeck_page.dart:657-658`:
    `HardwareKeyboard.instance.isMetaPressed || .isControlPressed` (Alt exclui).
    Reusar a mesma condição, não inventar detecção nova.
 3. **`FileViewerSession.reveal(line)`** (`file_viewer_session.dart:95`) já
@@ -38,7 +38,7 @@ posição LSP" → "`textDocument/definition`" → "abrir resultado".
 | C | **Resolvida (2026-07-24)**: arquivo fora do workspace (classe do SDK Flutter aberta por go-to-definition, pacote do pub-cache) é roteado pro servidor **que já existe** do projeto — highlight semântico e navegação funcionam lá dentro. Funciona porque esses arquivos são dependências do projeto e já estão no contexto de análise do servidor. Um servidor por workspace, igual VSCode. Ver `LspServerPool._rootFor`.<br><br>Duas tentativas erradas antes: (1) desligar o LSP pra arquivo externo — sem highlight semântico nem navegação lá; (2) subir um servidor **separado** com raiz no SDK (via o `pubspec.yaml` dele, achado pelo walk-up) — ele tentava indexar o pacote inteiro, milhares de arquivos, e travava a UI. O walk-up do `ProjectRootFinder` segue valendo **só dentro** do workspace (caso monorepo: subpacote com `pubspec.yaml` próprio ganha servidor próprio) |
 | D | Feedback visual: enquanto o modificador está pressionado **e** o mouse paira sobre um identifier, sublinha + cursor de mão (padrão VSCode) — evita clique "cego" sem saber se ali é navegável |
 
-## Estrutura esperada (cockpit/)
+## Estrutura esperada (flightdeck/)
 
 - `core/domain/contracts/lsp_client.dart` — novo método
   `Future<Result<List<LspLocation>, LspError>> definition(String path, {required int line, required int character})`
@@ -52,11 +52,11 @@ posição LSP" → "`textDocument/definition`" → "abrir resultado".
   posição de clique via o `TextField`/`RenderEditable` já usado pelo
   `CodeEditingController` (ver nota técnica abaixo), não reinventar layout de
   texto
-- `cockpit/ui/widgets/file_viewer.dart` — gesture layer: `Listener`/
+- `flightdeck/ui/widgets/file_viewer.dart` — gesture layer: `Listener`/
   `MouseRegion` sobre o editor pra (a) rastrear estado do modificador +
   posição do mouse (hover) e (b) interceptar o tap quando modificador ativo,
   antes do comportamento padrão de posicionar cursor
-- `cockpit/ui/viewmodels/cockpit_viewmodel.dart` — novo método
+- `flightdeck/ui/viewmodels/flightdeck_viewmodel.dart` — novo método
   `Future<void> goToDefinition(String path, int line, int character)` que
   chama `lspClient.definition(...)`, resolve o path do resultado, e reusa
   `openFile()` + `session.reveal(line)` (mesmo par do `openTerminalPath`)
@@ -102,7 +102,7 @@ Depois do offset: converter texto→linha/coluna com a mesma lógica de
    modificador ativo, chama `goToDefinition` em vez do comportamento padrão de
    posicionar cursor (ou além dele — decidir no passo se cursor deve mover
    junto, provável que sim, é inofensivo).
-5. **`CockpitViewModel.goToDefinition()`**: chama `definition()`, resolve
+5. **`FlightDeckViewModel.goToDefinition()`**: chama `definition()`, resolve
    `uri`→path absoluto, `openFile()` + `session.reveal(line)` (idêntico ao
    `openTerminalPath`). Sem resultado (`null`/lista vazia) → no-op silencioso
    (sem toast de erro — mesma UX do terminal quando o token não resolve).

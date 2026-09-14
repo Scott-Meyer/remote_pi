@@ -13,19 +13,19 @@ import {
 } from "@/components/landing/icons";
 import { ShaCopy } from "@/components/download/sha-copy";
 import {
-  loadCockpitManifest,
+  loadFlightDeckManifest,
   artifactFileName,
   formatBytes,
   ARCH_LABEL,
-  type CockpitArtifact,
-  type CockpitManifest,
-} from "@/lib/cockpit-release";
+  type FlightDeckArtifact,
+  type FlightDeckManifest,
+} from "@/lib/flightdeck-release";
 import { loadAppManifest } from "@/lib/app-release";
 
 export const metadata: Metadata = {
   title: "Download",
   description:
-    "Download Remote Pi — the desktop Cockpit (signed macOS, Windows, Linux) and the Android app (direct APK, no Play Store).",
+    "Download Remote Pi — the desktop FlightDeck (signed macOS, Windows, Linux) and the Android app (direct APK, no Play Store).",
 };
 
 const GETTING_STARTED = "/tutorials/getting-started";
@@ -47,7 +47,7 @@ const LINUX_ORDER: Record<string, number> = {
   "rpm:arm64": 3,
 };
 
-function linuxSort(a: CockpitArtifact, b: CockpitArtifact): number {
+function linuxSort(a: FlightDeckArtifact, b: FlightDeckArtifact): number {
   const ka = LINUX_ORDER[`${a.format}:${a.arch}`] ?? 99;
   const kb = LINUX_ORDER[`${b.format}:${b.arch}`] ?? 99;
   return ka - kb;
@@ -129,8 +129,8 @@ type OsGroup = {
   name: string;
   icon: ReactNode;
   tagline: string;
-  select: (m: CockpitManifest) => CockpitArtifact[];
-  instructions: (m: CockpitManifest) => ReactNode;
+  select: (m: FlightDeckManifest) => FlightDeckArtifact[];
+  instructions: (m: FlightDeckManifest) => ReactNode;
 };
 
 const OS_GROUPS: OsGroup[] = [
@@ -147,7 +147,7 @@ const OS_GROUPS: OsGroup[] = [
             Open the downloaded <code>.dmg</code>.
           </li>
           <li>
-            Drag <strong>Remote Pi Cockpit</strong> into your{" "}
+            Drag <strong>Remote Pi FlightDeck</strong> into your{" "}
             <strong>Applications</strong> folder.
           </li>
           <li>Launch it from Applications or Spotlight.</li>
@@ -190,11 +190,11 @@ const OS_GROUPS: OsGroup[] = [
         <p>Download the package for your architecture, then install it:</p>
         <CodeBlock
           label="Debian / Ubuntu — .deb"
-          code={`sudo dpkg -i remote-pi-cockpit_${m.version}_amd64.deb\nsudo apt-get install -f   # pull in any missing dependencies`}
+          code={`sudo dpkg -i remote-pi-flightdeck_${m.version}_amd64.deb\nsudo apt-get install -f   # pull in any missing dependencies`}
         />
         <CodeBlock
           label="Fedora / RHEL — .rpm"
-          code={`sudo dnf install ./remote-pi-cockpit-${m.version}.x86_64.rpm`}
+          code={`sudo dnf install ./remote-pi-flightdeck-${m.version}.x86_64.rpm`}
         />
         <p className="dl-note-foot">
           Swap <code>amd64</code>/<code>x86_64</code> for <code>arm64</code>/
@@ -207,8 +207,8 @@ const OS_GROUPS: OsGroup[] = [
 ];
 
 export default async function DownloadPage() {
-  const [cockpit, app] = await Promise.all([
-    loadCockpitManifest(),
+  const [flightdeck, app] = await Promise.all([
+    loadFlightDeckManifest(),
     loadAppManifest(),
   ]);
   const apk = app.manifest.artifacts[0];
@@ -221,17 +221,17 @@ export default async function DownloadPage() {
             <span className="eyebrow">Download</span>
             <h1>Download Remote Pi</h1>
             <p className="lede">
-              The desktop Cockpit and the phone app, built straight from CI. Grab
-              the Cockpit to drive your Pi coding agents from your computer, and
+              The desktop FlightDeck and the phone app, built straight from CI. Grab
+              the FlightDeck to drive your Pi coding agents from your computer, and
               the Android app to carry them in your pocket.
             </p>
           </header>
 
-          {/* ---------- Cockpit (desktop) ---------- */}
-          <section className="dl-product reveal" id="cockpit">
+          {/* ---------- FlightDeck (desktop) ---------- */}
+          <section className="dl-product reveal" id="flightdeck">
             <div className="section-head">
-              <span className="eyebrow">Desktop · Cockpit</span>
-              <h2>Remote Pi Cockpit</h2>
+              <span className="eyebrow">Desktop · FlightDeck</span>
+              <h2>Remote Pi FlightDeck</h2>
               <p>
                 Pair from your Mac, Windows, or Linux machine, watch live
                 sessions, and manage your 24/7 daemons and schedules from one
@@ -239,19 +239,19 @@ export default async function DownloadPage() {
               </p>
             </div>
             <div className="dl-meta">
-              <span>Version {cockpit.manifest.version}</span>
-              <span>Released {cockpit.manifest.date}</span>
+              <span>Version {flightdeck.manifest.version}</span>
+              <span>Released {flightdeck.manifest.date}</span>
               <span>Signed &amp; notarized on macOS</span>
             </div>
 
             <ReleaseNotes
-              version={cockpit.manifest.version}
-              notes={cockpit.manifest.notes}
-              live={cockpit.live}
+              version={flightdeck.manifest.version}
+              notes={flightdeck.manifest.notes}
+              live={flightdeck.live}
             />
 
             {OS_GROUPS.map((group) => {
-              const artifacts = group.select(cockpit.manifest);
+              const artifacts = group.select(flightdeck.manifest);
               if (artifacts.length === 0) return null;
               return (
                 <section className="dl-os" key={group.id} id={group.id}>
@@ -267,13 +267,13 @@ export default async function DownloadPage() {
                       <DownloadCard
                         key={`${a.format}-${a.arch}`}
                         artifact={a}
-                        live={cockpit.live}
+                        live={flightdeck.live}
                         archLabel={ARCH_LABEL[a.arch]}
                       />
                     ))}
                   </div>
                   <div className="dl-os-help">
-                    {group.instructions(cockpit.manifest)}
+                    {group.instructions(flightdeck.manifest)}
                   </div>
                 </section>
               );
@@ -281,7 +281,7 @@ export default async function DownloadPage() {
 
             <div className="dl-foot">
               <p>
-                Cockpit drives a local Pi install — it doesn&apos;t bundle one.
+                FlightDeck drives a local Pi install — it doesn&apos;t bundle one.
                 The app&apos;s onboarding checks for <code>pi</code>, the Remote
                 Pi plugin, and the supervisor, and walks you through anything
                 missing. New here?{" "}

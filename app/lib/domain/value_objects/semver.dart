@@ -3,7 +3,7 @@
 /// Ignora sufixos de pré-release/build (`-beta`, `+1`): considera só os três
 /// primeiros componentes numéricos. Componentes ausentes contam como 0
 /// (`1.2` == `1.2.0`); não-numéricos contam como 0. Espelha a versão do
-/// Cockpit (plano 43) — o app baixa o `latest.json` com o mesmo schema.
+/// FlightDeck (plano 43) — o app baixa o `latest.json` com o mesmo schema.
 library;
 
 List<int> _parse(String v) {
