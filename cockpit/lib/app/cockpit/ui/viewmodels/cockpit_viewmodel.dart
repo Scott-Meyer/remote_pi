@@ -2810,7 +2810,12 @@ class CockpitViewModel extends ChangeNotifier {
 
   /// Cria (ou reusa) um workspace remoto pra pasta [remotePath] do host
   /// [hostId] — o "workspace remoto = pasta" do plano 58 — e o seleciona.
-  Future<void> createRemoteWorkspace(String hostId, String remotePath) async {
+  /// Devolve o ID do workspace selecionado (`__remote__<pinId>`).
+  Future<String> createRemoteWorkspace(
+    String hostId,
+    String remotePath, {
+    String? name,
+  }) async {
     // Nasce no realm ativo, no fim da lista (igual ao workspace local novo).
     final roots = rootProjects;
     final nextOrder = roots.isEmpty
@@ -2819,12 +2824,15 @@ class CockpitViewModel extends ChangeNotifier {
     final pin = await _remoteHosts.addPin(
       hostId: hostId,
       path: remotePath,
+      name: name,
       realmId: realmCtrl.activeId,
       order: nextOrder,
     );
     _syncRemoteWorkspaces();
     notifyListeners();
-    selectProject('${Project.remotePrefix}${pin.id}');
+    final workspaceId = '${Project.remotePrefix}${pin.id}';
+    selectProject(workspaceId);
+    return workspaceId;
   }
 
   /// Roda um git cru no host do workspace remoto [wsId] (Camada A do menu do

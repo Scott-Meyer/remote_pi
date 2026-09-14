@@ -14,7 +14,6 @@ import 'package:cockpit/app/cockpit/domain/entities/notebook_document.dart';
 import 'package:cockpit/app/cockpit/domain/exceptions/http_request_error.dart';
 import 'package:cockpit/app/cockpit/domain/entities/project.dart';
 import 'package:cockpit/app/cockpit/domain/entities/remote_host.dart';
-import 'package:cockpit/app/cockpit/domain/entities/remote_workspace_pin.dart';
 import 'package:cockpit/app/cockpit/data/remote/ssh_tunnel.dart';
 import 'package:cockpit/app/cockpit/domain/entities/sql_statements.dart';
 import 'package:cockpit/app/cockpit/domain/services/db_access_gate.dart';
@@ -448,12 +447,12 @@ class CockpitCliHandler {
           // automaticamente com o sshTarget (ex: alias do ~/.ssh/config).
           final host = await _resolveOrRegisterRemoteHost(hostRef);
           final cleanPath = await _resolveRemotePath(host, rawPath);
-          await _vm.createRemoteWorkspace(host.id, cleanPath);
-          final workspaceId =
-              '${Project.remotePrefix}${RemoteWorkspacePin.idFor(host.id, cleanPath)}';
-          if (customName != null) {
-            await _vm.updateRemoteWorkspace(workspaceId, name: customName);
-          }
+          final workspaceId = await _vm.createRemoteWorkspace(
+            host.id,
+            cleanPath,
+            name: customName,
+          );
+
           final sessions = _vm.allSessions
               .where((s) => s.projectId == workspaceId)
               .toList();

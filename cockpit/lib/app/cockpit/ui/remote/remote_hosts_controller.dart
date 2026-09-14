@@ -175,18 +175,33 @@ class RemoteHostsController extends ChangeNotifier {
 
   /// Fixa uma pasta [path] do host [hostId] como workspace (idempotente por
   /// (host, pasta)); devolve o pin.
+  ///
+  /// Se o pin já existir, devolve-o inalterado (preservando nome, cor, imagem,
+  /// realm e ordem customizados pelo usuário). [name] é usado apenas na criação
+  /// de um pin novo (default = basename do [path]).
   Future<RemoteWorkspacePin> addPin({
     required String hostId,
     required String path,
+    String? name,
     String realmId = 'default',
     int order = 0,
   }) async {
-    final name = _basename(path);
+    final pinId = RemoteWorkspacePin.idFor(hostId, path);
+    for (final existing in _store.pins()) {
+      if (existing.id == pinId ||
+          (existing.hostId == hostId && existing.path == path)) {
+        return existing;
+      }
+    }
+    final defaultName = _basename(path);
+    final resolvedName = (name != null && name.trim().isNotEmpty)
+        ? name.trim()
+        : (defaultName.isEmpty ? path : defaultName);
     final pin = RemoteWorkspacePin(
-      id: RemoteWorkspacePin.idFor(hostId, path),
+      id: pinId,
       hostId: hostId,
       path: path,
-      name: name.isEmpty ? path : name,
+      name: resolvedName,
       realmId: realmId,
       order: order,
     );
