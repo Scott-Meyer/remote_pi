@@ -31,18 +31,23 @@ class _FakeExec {
 /// Executa os comandos POSIX de verdade, mas com HOME isolado. Assim os testes
 /// de rollback cobrem renames e o filesystem, não só substrings do shell gerado.
 class _RealPosixExec {
-  _RealPosixExec({required this.home, String? pathPrefix})
-    : _path = [
-        ?pathPrefix,
-        '/usr/local/bin',
-        '/opt/homebrew/bin',
-        '/usr/bin',
-        '/bin',
-        '/usr/sbin',
-        '/sbin',
-      ].join(':');
+  _RealPosixExec({
+    required this.home,
+    String? pathPrefix,
+    String shell = '/bin/sh',
+  }) : _shell = shell,
+       _path = [
+         ?pathPrefix,
+         '/usr/local/bin',
+         '/opt/homebrew/bin',
+         '/usr/bin',
+         '/bin',
+         '/usr/sbin',
+         '/sbin',
+       ].join(':');
 
   final String home;
+  final String _shell;
   final String _path;
 
   Future<(int, String, String)> call(
@@ -50,7 +55,7 @@ class _RealPosixExec {
     List<int>? stdinBytes,
   }) async {
     final process = await Process.start(
-      '/bin/sh',
+      _shell,
       ['-c', command],
       environment: {'HOME': home, 'PATH': _path},
     );
@@ -408,6 +413,30 @@ void main() {
         expect(manifestText, contains('  bin/cockpit\n'));
         expect(manifestText, contains('  lib/libcockpit_pty.dylib\n'));
       },
+    );
+
+    test(
+      'host zsh limpo não aborta quando globs de recovery não têm match',
+      () async {
+        final root = Directory.systemTemp.createTempSync(
+          'cockpit-posix-zsh-nomatch',
+        );
+        addTearDown(() => root.deleteSync(recursive: true));
+        final home = Directory('${root.path}/home')..createSync();
+        final bundleRoot = Directory('${root.path}/bundle')..createSync();
+        final exec = _RealPosixExec(home: home.path, shell: '/bin/zsh');
+        final shell = PosixHostShell(probe: _posixProbe, exec: exec.call);
+
+        await shell.installFromClient(_posixTestBundle(bundleRoot));
+
+        expect(
+          File(
+            '${home.path}/.cockpit/server/bin/cockpit-server',
+          ).readAsStringSync(),
+          'new-server',
+        );
+      },
+      skip: !File('/bin/zsh').existsSync(),
     );
 
     test('upload interrompido não promove staging parcial', () async {
