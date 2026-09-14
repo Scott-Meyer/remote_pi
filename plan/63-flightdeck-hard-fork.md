@@ -7,10 +7,11 @@ CLI, sidecar, metadados, distribuição e estado no disco. Não haverá alias de
 compatibilidade com a marca anterior; manter duas identidades prolongaria exatamente o
 estado ambíguo que este fork quer encerrar.
 
-A troca não pode apagar o estado local existente nem alterar workspaces do dd-swarm ou
-máquinas remotas. Dados locais são migrados uma vez durante a instalação supervisionada.
-Estado legado em hosts remotos fica fora desta operação; o cliente instala o novo sidecar
-normalmente quando voltar a conectar.
+A troca não pode apagar o estado local existente nem alterar workspaces de produtos
+consumidores ou máquinas remotas. O corte supervisionado pode copiar dados locais uma
+única vez fora do produto; FlightDeck não contém conversores, fallbacks ou lógica de
+transição. Estado de outros produtos em hosts remotos fica fora desta operação; o cliente
+instala o sidecar FlightDeck normalmente quando volta a conectar.
 
 O conserto de preservação de pins remotos é independente do rebrand e deve permanecer
 num commit pequeno e revisável.
@@ -61,7 +62,7 @@ ou terminais externos reportem ao app errado. O rebrand troca nomes/paths sem re
 feature.
 
 Use `git mv` para caminhos rastreados. Não tocar no `Podfile.lock` salvo para resolver
-ruído de versão do CocoaPods. Não editar subprojetos ou VMs do dd-swarm.
+ruído de versão do CocoaPods. Não editar projetos consumidores ou VMs remotas.
 
 **Aceite:** fora de `.git`, não existe ocorrência case-insensitive do token legado em nome
 de arquivo, diretório ou conteúdo rastreado. A auditoria evita registrar o token inteiro no

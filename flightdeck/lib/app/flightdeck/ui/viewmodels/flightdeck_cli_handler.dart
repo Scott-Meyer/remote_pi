@@ -440,7 +440,7 @@ class FlightDeckCliHandler {
         final customName = rawName.isEmpty ? null : rawName;
 
         if (hostRef.isNotEmpty) {
-          // Workspace REMOTO (plano 58 / dd-swarm):
+          // Workspace remoto (plano 58):
           // Resolve host existente (por id/sshTarget/nome) ou registra
           // automaticamente com o sshTarget (ex: alias do ~/.ssh/config).
           final host = await _resolveOrRegisterRemoteHost(hostRef);
